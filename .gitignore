@@ -1,0 +1,17 @@
+.venv/
+.venv*/
+.env
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+.DS_Store
+calls.db
+calls.db-wal
+calls.db-shm
+recordings/
+contacts.json
+*.json.tmp
+*.wav
+*.pid
+/tmp/

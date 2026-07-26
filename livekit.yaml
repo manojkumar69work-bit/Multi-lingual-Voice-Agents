@@ -1,0 +1,22 @@
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  udp_port: 7882
+  tcp_port: 7881
+  use_external_ip: false
+  # ── IMPORTANT ─────────────────────────────────────────────────────
+  # Local dev: node_ip: "127.0.0.1" lets a browser on the host reach
+  # WebRTC media through Docker port mapping.
+  #
+  # Production (SIP trunk / remote callers):
+  # - Remove node_ip and set use_external_ip: true instead.
+  # - Or set node_ip to your VPS public IP.
+  # ──────────────────────────────────────────────────────────────────
+  node_ip: "127.0.0.1"
+keys:
+  "devkey": "secret"
+logging:
+  level: info
+redis:
+  address: "redis:6379"

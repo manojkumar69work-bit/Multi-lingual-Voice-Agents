@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ME Automations — AI Automation for Ambitious Businesses</title>
+  <meta name="description" content="ME Automations (MEA) builds AI automation, custom workflows, and enterprise-grade systems that run your business while you sleep." />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind (CDN, zero build step) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink:    '#05050c',
+            void:   '#0a0a16',
+            surface:'#10101f',
+            violet: { 350: '#a78bfa' },
+            brand:  { 400: '#8b5cf6', 500: '#7c3aed', 600: '#6d28d9' },
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            display: ['"Space Grotesk"', 'Inter', 'sans-serif'],
+          },
+          boxShadow: {
+            glow: '0 0 80px -20px rgba(139,92,246,.6)',
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #05050c; }
+
+    /* ── Aurora background blobs ───────────────────────────── */
+    .aurora { position: fixed; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+    .blob { position: absolute; border-radius: 50%; filter: blur(90px); opacity: .55; }
+    .blob-1 { width: 620px; height: 620px; top: -180px; left: -120px;
+      background: radial-gradient(circle, #7c3aed, transparent 70%); animation: drift1 22s ease-in-out infinite; }
+    .blob-2 { width: 520px; height: 520px; top: 8%; right: -140px;
+      background: radial-gradient(circle, #4f46e5, transparent 70%); animation: drift2 26s ease-in-out infinite; }
+    .blob-3 { width: 540px; height: 540px; bottom: -160px; left: 30%;
+      background: radial-gradient(circle, #db2777, transparent 70%); opacity: .35; animation: drift3 30s ease-in-out infinite; }
+    @keyframes drift1 { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(60px,40px) scale(1.1);} }
+    @keyframes drift2 { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(-50px,30px) scale(1.08);} }
+    @keyframes drift3 { 0%,100%{ transform: translate(0,0) scale(1);} 50%{ transform: translate(40px,-40px) scale(1.12);} }
+
+    /* Fine grid overlay */
+    .grid-overlay {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+    }
+
+    /* Gradient text */
+    .text-gradient {
+      background: linear-gradient(110deg, #fff 10%, #c4b5fd 45%, #818cf8 80%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    /* Glass */
+    .glass {
+      background: linear-gradient(160deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      border: 1px solid rgba(255,255,255,.08);
+      backdrop-filter: blur(14px);
+    }
+    .glass-strong {
+      background: linear-gradient(160deg, rgba(255,255,255,.08), rgba(255,255,255,.025));
+      border: 1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(20px);
+    }
+
+    /* Card hover sheen */
+    .sheen { position: relative; overflow: hidden; transition: transform .4s cubic-bezier(.2,.7,.3,1), border-color .4s; }
+    .sheen:hover { transform: translateY(-4px); border-color: rgba(167,139,250,.35); }
+    .sheen::after {
+      content:''; position:absolute; inset:0;
+      background: radial-gradient(400px circle at var(--mx,50%) var(--my,0%), rgba(139,92,246,.14), transparent 60%);
+      opacity:0; transition: opacity .4s;
+    }
+    .sheen:hover::after { opacity:1; }
+
+    /* Animated CTA */
+    .btn-primary { position: relative; overflow: hidden; }
+    .btn-primary::before {
+      content:''; position:absolute; top:0; left:-120%; width:60%; height:100%;
+      background: linear-gradient(120deg, transparent, rgba(255,255,255,.45), transparent);
+      transform: skewX(-20deg); transition: left .6s;
+    }
+    .btn-primary:hover::before { left: 140%; }
+
+    /* Reveal on scroll */
+    .reveal { opacity: 0; transform: translateY(28px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.3,1); }
+    .reveal.in { opacity: 1; transform: none; }
+
+    /* Marquee */
+    .marquee { display:flex; gap:4rem; width:max-content; animation: scroll 28s linear infinite; }
+    @keyframes scroll { to { transform: translateX(-50%); } }
+
+    /* Voice waveform (pure CSS, no audio) */
+    .wave { display:flex; align-items:center; gap:5px; height:64px; }
+    .wave span { width:5px; border-radius:99px; background: linear-gradient(180deg,#a78bfa,#6366f1);
+      animation: bounce 1.4s ease-in-out infinite; }
+    @keyframes bounce { 0%,100%{ height:14px; opacity:.5;} 50%{ height:56px; opacity:1;} }
+
+    .nav-scrolled { background: rgba(10,10,22,.7); border-color: rgba(255,255,255,.08); backdrop-filter: blur(16px); }
+  </style>
+</head>
+
+<body class="font-sans text-slate-200 antialiased selection:bg-brand-500/40 selection:text-white overflow-x-hidden">
+
+  <!-- ── Background layers ── -->
+  <div class="aurora">
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+    <div class="blob blob-3"></div>
+  </div>
+  <div class="grid-overlay"></div>
+
+  <!-- ══════════════ NAV ══════════════ -->
+  <header id="nav" class="fixed top-0 inset-x-0 z-50 border-b border-transparent transition-all duration-300">
+    <nav class="max-w-7xl mx-auto px-6 h-[72px] flex items-center justify-between">
+      <a href="#top" class="flex items-center group">
+        <img src="static/mea-logo.png" alt="ME Automations (MEA)" class="h-12 w-auto select-none transition-transform group-hover:scale-105" />
+      </a>
+
+      <div class="hidden md:flex items-center gap-8 text-sm text-slate-300">
+        <a href="#services" class="hover:text-white transition">Services</a>
+        <a href="#roadmap"  class="hover:text-white transition">Roadmap</a>
+        <a href="#voice"    class="hover:text-white transition">Voice Agents</a>
+        <a href="#contact"  class="hover:text-white transition">Contact</a>
+      </div>
+
+      <a href="#contact" class="btn-primary hidden sm:inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-brand-500 to-indigo-600 shadow-lg shadow-brand-600/30 hover:shadow-brand-500/50 transition">
+        Book a call
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+
+      <button id="menuBtn" class="md:hidden text-slate-200" aria-label="Menu">
+        <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </nav>
+    <!-- mobile menu -->
+    <div id="mobileMenu" class="md:hidden hidden border-t border-white/5 bg-void/90 backdrop-blur-xl">
+      <div class="px-6 py-4 flex flex-col gap-4 text-slate-200">
+        <a href="#services" class="menu-link">Services</a>
+        <a href="#roadmap"  class="menu-link">Roadmap</a>
+        <a href="#voice"    class="menu-link">Voice Agents</a>
+        <a href="#contact"  class="menu-link font-semibold text-brand-400">Contact →</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top" class="relative z-10">
+
+    <!-- ══════════════ HERO ══════════════ -->
+    <section class="relative max-w-7xl mx-auto px-6 pt-36 pb-20 lg:pt-44 lg:pb-28">
+      <div class="grid lg:grid-cols-2 gap-14 items-center">
+
+        <!-- Copy -->
+        <div class="reveal">
+          <div class="inline-flex items-center gap-2 rounded-full glass px-3.5 py-1.5 text-xs font-medium text-violet-350 mb-7">
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-brand-400"></span>
+            </span>
+            AI Automation Agency · Built for scale
+          </div>
+
+          <h1 class="font-display font-bold tracking-tight text-[44px] leading-[1.05] sm:text-6xl text-white">
+            Automate the work.<br>
+            <span class="text-gradient">Amplify the business.</span>
+          </h1>
+
+          <p class="mt-6 text-lg text-slate-400 max-w-xl leading-relaxed">
+            MEA designs and ships intelligent automation systems — custom workflows, AI agents,
+            and enterprise integrations that quietly run your operations 24/7, so your team
+            ships outcomes instead of busywork.
+          </p>
+
+          <div class="mt-9 flex flex-wrap items-center gap-4">
+            <a href="#contact" class="btn-primary inline-flex items-center gap-2 rounded-full px-7 py-3.5 text-sm font-semibold text-white bg-gradient-to-r from-brand-500 to-indigo-600 shadow-lg shadow-brand-600/40 hover:shadow-brand-500/60 transition">
+              Start your project
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+            <a href="#services" class="inline-flex items-center gap-2 rounded-full px-6 py-3.5 text-sm font-semibold text-slate-200 glass hover:border-white/20 transition">
+              Explore services
+            </a>
+          </div>
+
+          <!-- Stat row -->
+          <div class="mt-12 grid grid-cols-3 gap-6 max-w-md">
+            <div>
+              <div class="font-display text-3xl font-bold text-white">10k+</div>
+              <div class="text-xs text-slate-500 mt-1">hours automated</div>
+            </div>
+            <div class="border-l border-white/10 pl-6">
+              <div class="font-display text-3xl font-bold text-white">99.9%</div>
+              <div class="text-xs text-slate-500 mt-1">uptime SLAs</div>
+            </div>
+            <div class="border-l border-white/10 pl-6">
+              <div class="font-display text-3xl font-bold text-white">24/7</div>
+              <div class="text-xs text-slate-500 mt-1">always on</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Premium visual placeholder: glass dashboard mock -->
+        <div class="reveal relative" style="transition-delay:.12s">
+          <div class="absolute -inset-6 bg-gradient-to-tr from-brand-600/30 via-indigo-600/20 to-fuchsia-500/20 blur-3xl rounded-[2rem]"></div>
+
+          <div class="glass-strong relative rounded-[1.75rem] p-3 shadow-2xl">
+            <!-- window chrome -->
+            <div class="flex items-center gap-1.5 px-3 py-2.5">
+              <span class="w-3 h-3 rounded-full bg-red-400/80"></span>
+              <span class="w-3 h-3 rounded-full bg-yellow-400/80"></span>
+              <span class="w-3 h-3 rounded-full bg-green-400/80"></span>
+              <span class="ml-3 text-[11px] text-slate-500">mea · automation console</span>
+            </div>
+
+            <!-- IMAGE PLACEHOLDER — swap this block for a real product screenshot -->
+            <div class="rounded-2xl overflow-hidden border border-white/5 bg-gradient-to-br from-void to-surface aspect-[4/3] p-5">
+              <div class="flex items-center justify-between mb-4">
+                <div class="text-xs text-slate-400">Active workflows</div>
+                <div class="text-[10px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300">running</div>
+              </div>
+              <!-- fake bars -->
+              <div class="space-y-3">
+                <div class="flex items-center gap-3"><div class="w-20 text-[11px] text-slate-500">Lead routing</div><div class="flex-1 h-2 rounded-full bg-white/5"><div class="h-2 rounded-full bg-gradient-to-r from-brand-400 to-indigo-500 w-[88%]"></div></div></div>
+                <div class="flex items-center gap-3"><div class="w-20 text-[11px] text-slate-500">Onboarding</div><div class="flex-1 h-2 rounded-full bg-white/5"><div class="h-2 rounded-full bg-gradient-to-r from-fuchsia-400 to-brand-500 w-[64%]"></div></div></div>
+                <div class="flex items-center gap-3"><div class="w-20 text-[11px] text-slate-500">Reporting</div><div class="flex-1 h-2 rounded-full bg-white/5"><div class="h-2 rounded-full bg-gradient-to-r from-indigo-400 to-cyan-400 w-[76%]"></div></div></div>
+              </div>
+              <div class="mt-5 grid grid-cols-3 gap-3">
+                <div class="glass rounded-xl p-3"><div class="text-[10px] text-slate-500">Tasks/day</div><div class="font-display text-lg text-white">4,210</div></div>
+                <div class="glass rounded-xl p-3"><div class="text-[10px] text-slate-500">Saved</div><div class="font-display text-lg text-white">312h</div></div>
+                <div class="glass rounded-xl p-3"><div class="text-[10px] text-slate-500">Errors</div><div class="font-display text-lg text-emerald-300">0.1%</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- floating chips -->
+          <div class="glass-strong absolute -left-5 top-16 rounded-2xl px-4 py-3 shadow-xl hidden sm:flex items-center gap-3 animate-[drift1_8s_ease-in-out_infinite]">
+            <div class="grid place-items-center w-9 h-9 rounded-xl bg-brand-500/20 text-brand-400">⚡</div>
+            <div><div class="text-[11px] text-slate-400">Workflow triggered</div><div class="text-xs font-semibold text-white">in 0.3s</div></div>
+          </div>
+          <div class="glass-strong absolute -right-4 bottom-12 rounded-2xl px-4 py-3 shadow-xl hidden sm:flex items-center gap-3">
+            <div class="grid place-items-center w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-300">✓</div>
+            <div><div class="text-[11px] text-slate-400">New lead captured</div><div class="text-xs font-semibold text-white">Acme Corp</div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ LOGO MARQUEE ══════════════ -->
+    <section class="py-10 border-y border-white/5">
+      <p class="text-center text-xs uppercase tracking-[0.2em] text-slate-600 mb-7">What we automate</p>
+      <div class="relative overflow-hidden max-w-6xl mx-auto px-6"
+           style="mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)">
+        <div class="marquee text-slate-400 font-display font-semibold text-xl items-center">
+          <span>AI&nbsp;Automation</span><span class="text-brand-500/60">•</span><span>Voice&nbsp;Agents</span><span class="text-brand-500/60">•</span><span>Custom&nbsp;Workflows</span><span class="text-brand-500/60">•</span><span>Enterprise&nbsp;Solutions</span><span class="text-brand-500/60">•</span><span>LLM&nbsp;Agents</span><span class="text-brand-500/60">•</span><span>RAG&nbsp;Pipelines</span><span class="text-brand-500/60">•</span><span>Lead&nbsp;Qualification</span><span class="text-brand-500/60">•</span><span>Doc&nbsp;Processing</span><span class="text-brand-500/60">•</span><span>Integrations</span><span class="text-brand-500/60">•</span>
+          <span>AI&nbsp;Automation</span><span class="text-brand-500/60">•</span><span>Voice&nbsp;Agents</span><span class="text-brand-500/60">•</span><span>Custom&nbsp;Workflows</span><span class="text-brand-500/60">•</span><span>Enterprise&nbsp;Solutions</span><span class="text-brand-500/60">•</span><span>LLM&nbsp;Agents</span><span class="text-brand-500/60">•</span><span>RAG&nbsp;Pipelines</span><span class="text-brand-500/60">•</span><span>Lead&nbsp;Qualification</span><span class="text-brand-500/60">•</span><span>Doc&nbsp;Processing</span><span class="text-brand-500/60">•</span><span>Integrations</span><span class="text-brand-500/60">•</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ SERVICES (bento) ══════════════ -->
+    <section id="services" class="max-w-7xl mx-auto px-6 py-24 lg:py-32">
+      <div class="reveal max-w-2xl mb-14">
+        <span class="text-sm font-semibold text-brand-400">What we build</span>
+        <h2 class="font-display font-bold text-4xl sm:text-5xl text-white mt-3 tracking-tight">Services engineered to compound</h2>
+        <p class="text-slate-400 mt-4 text-lg">From a single automation to an enterprise nervous system — we meet you where you are and scale from there.</p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-5">
+
+        <!-- AI Automation (wide) -->
+        <article class="sheen glass rounded-3xl p-8 md:col-span-2 md:row-span-1 flex flex-col justify-between min-h-[280px]">
+          <div>
+            <div class="grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-br from-brand-500/30 to-indigo-600/30 text-brand-400 mb-5">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v4m0 12v4m10-10h-4M6 12H2m15.07-5.07-2.83 2.83M9.76 14.24l-2.83 2.83m0-10.14 2.83 2.83m4.48 4.48 2.83 2.83"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+            <h3 class="font-display text-2xl font-semibold text-white">AI Automation</h3>
+            <p class="text-slate-400 mt-3 max-w-lg leading-relaxed">Intelligent agents that read, decide, and act across your stack — triaging tickets, qualifying leads, drafting docs, and updating systems without a human in the loop.</p>
+          </div>
+          <div class="flex flex-wrap gap-2 mt-6">
+            <span class="text-xs glass rounded-full px-3 py-1 text-slate-300">LLM agents</span>
+            <span class="text-xs glass rounded-full px-3 py-1 text-slate-300">RAG pipelines</span>
+            <span class="text-xs glass rounded-full px-3 py-1 text-slate-300">Doc processing</span>
+          </div>
+        </article>
+
+        <!-- Custom Workflows -->
+        <article class="sheen glass rounded-3xl p-8 flex flex-col justify-between min-h-[280px]">
+          <div>
+            <div class="grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-br from-fuchsia-500/30 to-brand-500/30 text-fuchsia-300 mb-5">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h6m6 0h6M3 12h12m3 0h3M3 18h6m6 0h6"/><circle cx="12" cy="6" r="2"/><circle cx="18" cy="12" r="2"/><circle cx="12" cy="18" r="2"/></svg>
+            </div>
+            <h3 class="font-display text-2xl font-semibold text-white">Custom Workflows</h3>
+            <p class="text-slate-400 mt-3 leading-relaxed">Bespoke pipelines that connect your CRM, inbox, sheets, and APIs into one reliable, observable flow.</p>
+          </div>
+          <span class="text-sm text-brand-400 font-medium mt-5 inline-flex items-center gap-1">Tailored to you →</span>
+        </article>
+
+        <!-- Enterprise Solutions -->
+        <article class="sheen glass rounded-3xl p-8 flex flex-col justify-between min-h-[280px]">
+          <div>
+            <div class="grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500/30 to-cyan-500/30 text-cyan-300 mb-5">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/></svg>
+            </div>
+            <h3 class="font-display text-2xl font-semibold text-white">Enterprise Solutions</h3>
+            <p class="text-slate-400 mt-3 leading-relaxed">Secure, multi-tenant platforms with SSO, audit logs, and SLAs — built to satisfy procurement and IT.</p>
+          </div>
+          <span class="text-sm text-cyan-300 font-medium mt-5 inline-flex items-center gap-1">SOC-ready →</span>
+        </article>
+
+        <!-- Strip: process / integrations (wide) -->
+        <article class="sheen glass rounded-3xl p-8 md:col-span-2 flex flex-col sm:flex-row items-center gap-8">
+          <div class="flex-1">
+            <h3 class="font-display text-2xl font-semibold text-white">Integrations that just work</h3>
+            <p class="text-slate-400 mt-3 leading-relaxed">We plug into the tools you already use — Slack, HubSpot, Notion, Google Workspace, Stripe, and 200+ more — and keep them in perfect sync.</p>
+          </div>
+          <div class="grid grid-cols-4 gap-3">
+            <!-- integration tiles: generic category icons (no third-party brand marks) -->
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-brand-400 transition hover:border-brand-400/40" title="Messaging">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-indigo-400 transition hover:border-indigo-400/40" title="CRM">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-fuchsia-300 transition hover:border-fuchsia-300/40" title="Docs & notes">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-cyan-300 transition hover:border-cyan-300/40" title="Workspace apps">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-brand-400 transition hover:border-brand-400/40" title="Sync in real time">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-indigo-400 transition hover:border-indigo-400/40" title="Email">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-fuchsia-300 transition hover:border-fuchsia-300/40" title="Payments">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+            </div>
+            <div class="glass rounded-2xl w-14 h-14 grid place-items-center text-slate-300 transition hover:border-white/20" title="200+ more">
+              <span class="font-display text-sm font-semibold tracking-tight">200+</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ══════════════ ROADMAP ══════════════ -->
+    <section id="roadmap" class="max-w-7xl mx-auto px-6 py-24 lg:py-28">
+      <div class="reveal text-center max-w-2xl mx-auto mb-16">
+        <span class="text-sm font-semibold text-brand-400">Where we're headed</span>
+        <h2 class="font-display font-bold text-4xl sm:text-5xl text-white mt-3 tracking-tight">The MEA roadmap</h2>
+        <p class="text-slate-400 mt-4 text-lg">A clear path from automation today to autonomous voice tomorrow.</p>
+      </div>
+
+      <div class="relative">
+        <!-- center line -->
+        <div class="hidden md:block absolute left-1/2 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-white/15 to-transparent"></div>
+
+        <div class="space-y-8 md:space-y-0">
+          <!-- item -->
+          <div class="md:grid md:grid-cols-2 md:gap-12 items-center reveal">
+            <div class="md:text-right md:pr-12">
+              <div class="glass rounded-2xl p-6 inline-block text-left">
+                <div class="flex items-center gap-2 text-emerald-300 text-xs font-semibold mb-2"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>SHIPPED</div>
+                <h3 class="font-display text-xl text-white font-semibold">AI Automation & Workflows</h3>
+                <p class="text-slate-400 text-sm mt-2">Production agents and pipelines running for clients today.</p>
+              </div>
+            </div>
+            <div class="hidden md:block"></div>
+          </div>
+
+          <div class="md:grid md:grid-cols-2 md:gap-12 items-center reveal">
+            <div class="hidden md:block"></div>
+            <div class="md:pl-12">
+              <div class="glass rounded-2xl p-6 inline-block">
+                <div class="flex items-center gap-2 text-brand-400 text-xs font-semibold mb-2"><span class="w-2 h-2 rounded-full bg-brand-400 animate-pulse"></span>IN PROGRESS</div>
+                <h3 class="font-display text-xl text-white font-semibold">Enterprise multi-tenant platform</h3>
+                <p class="text-slate-400 text-sm mt-2">SSO, granular roles, audit trails, and usage analytics.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="md:grid md:grid-cols-2 md:gap-12 items-center reveal">
+            <div class="md:text-right md:pr-12">
+              <div class="glass rounded-2xl p-6 inline-block text-left">
+                <div class="flex items-center gap-2 text-fuchsia-300 text-xs font-semibold mb-2"><span class="w-2 h-2 rounded-full bg-fuchsia-400"></span>COMING SOON</div>
+                <h3 class="font-display text-xl text-white font-semibold">Custom Voice Agents</h3>
+                <p class="text-slate-400 text-sm mt-2">Tailored voice profiles that let businesses talk to MEA — and their customers — naturally.</p>
+              </div>
+            </div>
+            <div class="hidden md:block"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ VOICE PREVIEW (coming soon) ══════════════ -->
+    <section id="voice" class="max-w-7xl mx-auto px-6 pb-24 lg:pb-32">
+      <div class="reveal relative rounded-[2rem] overflow-hidden glass-strong p-10 sm:p-14">
+        <div class="absolute -top-24 -right-24 w-96 h-96 bg-fuchsia-600/20 blur-3xl rounded-full"></div>
+        <div class="absolute -bottom-24 -left-24 w-96 h-96 bg-brand-600/20 blur-3xl rounded-full"></div>
+
+        <div class="relative grid lg:grid-cols-2 gap-12 items-center">
+          <div>
+            <span class="inline-flex items-center gap-2 rounded-full glass px-3 py-1.5 text-xs font-semibold text-fuchsia-300 mb-6">
+              <span class="w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse"></span> Coming soon
+            </span>
+            <h2 class="font-display font-bold text-4xl sm:text-5xl text-white tracking-tight leading-tight">
+              Custom <span class="text-gradient">Voice Agents</span>
+            </h2>
+            <p class="text-slate-400 mt-5 text-lg leading-relaxed max-w-lg">
+              Soon, every business on MEA will get a tailored voice profile — a branded, natural-sounding
+              agent that answers calls, qualifies leads, and connects customers to you around the clock.
+              No scripts. No hold music. Just conversation.
+            </p>
+
+            <ul class="mt-7 space-y-3 text-sm text-slate-300">
+              <li class="flex items-center gap-3"><span class="text-fuchsia-300">◆</span> Branded, human-grade voices</li>
+              <li class="flex items-center gap-3"><span class="text-fuchsia-300">◆</span> Multilingual & accent-aware</li>
+              <li class="flex items-center gap-3"><span class="text-fuchsia-300">◆</span> Plugs into your existing workflows</li>
+            </ul>
+
+            <a href="#contact" class="btn-primary inline-flex items-center gap-2 rounded-full px-6 py-3 mt-9 text-sm font-semibold text-white bg-gradient-to-r from-fuchsia-500 to-brand-600 shadow-lg shadow-fuchsia-600/30 transition">
+              Join the waitlist
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </a>
+          </div>
+
+          <!-- Static voice visual placeholder (NO live audio) -->
+          <div class="glass rounded-3xl p-8">
+            <div class="flex items-center justify-between mb-6">
+              <div class="flex items-center gap-3">
+                <div class="grid place-items-center w-11 h-11 rounded-2xl bg-gradient-to-br from-fuchsia-500 to-brand-600 text-white text-lg">🎙️</div>
+                <div>
+                  <div class="text-white font-semibold text-sm">MEA Voice · Riya</div>
+                  <div class="text-[11px] text-slate-500">Hinglish sample</div>
+                </div>
+              </div>
+              <span class="text-[10px] px-2 py-1 rounded-full bg-fuchsia-500/15 text-fuchsia-300">live</span>
+            </div>
+
+            <!-- animated bars, decorative -->
+            <div class="wave justify-center my-6">
+              <span style="animation-delay:0s"></span><span style="animation-delay:.1s"></span><span style="animation-delay:.2s"></span>
+              <span style="animation-delay:.3s"></span><span style="animation-delay:.15s"></span><span style="animation-delay:.25s"></span>
+              <span style="animation-delay:.05s"></span><span style="animation-delay:.35s"></span><span style="animation-delay:.2s"></span>
+              <span style="animation-delay:.1s"></span><span style="animation-delay:.3s"></span><span style="animation-delay:.15s"></span>
+              <span style="animation-delay:.25s"></span><span style="animation-delay:.05s"></span><span style="animation-delay:.2s"></span>
+            </div>
+
+            <!-- real audio sample -->
+            <audio controls preload="none" class="w-full mt-2"
+                   style="border-radius:9999px; outline:none;">
+              <source src="/demo/voice/mea_hinglish_sample.wav" type="audio/wav" />
+              Your browser does not support the audio element.
+            </audio>
+
+            <div class="grid grid-cols-3 gap-3 mt-6">
+              <div class="glass rounded-xl p-3 text-center"><div class="text-[10px] text-slate-500 mb-1">Tone</div><div class="text-xs text-white">Warm</div></div>
+              <div class="glass rounded-xl p-3 text-center"><div class="text-[10px] text-slate-500 mb-1">Language</div><div class="text-xs text-white">Multi</div></div>
+              <div class="glass rounded-xl p-3 text-center"><div class="text-[10px] text-slate-500 mb-1">Latency</div><div class="text-xs text-white">&lt;500ms</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════ CONTACT ══════════════ -->
+    <section id="contact" class="max-w-7xl mx-auto px-6 pb-28">
+      <div class="grid lg:grid-cols-2 gap-12 items-center">
+
+        <div class="reveal">
+          <span class="text-sm font-semibold text-brand-400">Let's talk</span>
+          <h2 class="font-display font-bold text-4xl sm:text-5xl text-white mt-3 tracking-tight leading-tight">Tell us what you want to automate</h2>
+          <p class="text-slate-400 mt-5 text-lg leading-relaxed max-w-md">
+            Share a few details and we'll get back within one business day with a tailored plan
+            and a fixed-scope proposal. No pressure, no fluff.
+          </p>
+
+          <div class="mt-9 space-y-4">
+            <div class="flex items-center gap-4 text-slate-300">
+              <div class="grid place-items-center w-11 h-11 rounded-2xl glass text-brand-400">✉️</div>
+              <div><div class="text-xs text-slate-500">Email us</div><div class="text-sm font-medium">hello@meautomations.ai</div></div>
+            </div>
+            <div class="flex items-center gap-4 text-slate-300">
+              <div class="grid place-items-center w-11 h-11 rounded-2xl glass text-brand-400">⚡</div>
+              <div><div class="text-xs text-slate-500">Response time</div><div class="text-sm font-medium">&lt; 24 hours</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form -->
+        <div class="reveal" style="transition-delay:.1s">
+          <form id="contactForm" class="glass-strong rounded-3xl p-7 sm:p-9 shadow-2xl">
+            <div class="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-2">Full name</label>
+                <input name="name" required placeholder="Jane Cooper"
+                  class="w-full rounded-xl bg-void/60 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400 transition" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-2">Work email</label>
+                <input name="email" type="email" required placeholder="jane@company.com"
+                  class="w-full rounded-xl bg-void/60 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400 transition" />
+              </div>
+            </div>
+
+            <div class="grid sm:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-2">Company</label>
+                <input name="company" placeholder="Acme Corp"
+                  class="w-full rounded-xl bg-void/60 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400 transition" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-400 mb-2">Interested in</label>
+                <select name="service"
+                  class="w-full rounded-xl bg-void/60 border border-white/10 px-4 py-3 text-sm text-white focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400 transition">
+                  <option class="bg-surface">AI Automation</option>
+                  <option class="bg-surface">Custom Workflows</option>
+                  <option class="bg-surface">Enterprise Solutions</option>
+                  <option class="bg-surface">Custom Voice Agents (waitlist)</option>
+                  <option class="bg-surface">Not sure yet</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <label class="block text-xs font-medium text-slate-400 mb-2">What do you want to automate?</label>
+              <textarea name="message" rows="4" placeholder="We spend hours every week on…"
+                class="w-full rounded-xl bg-void/60 border border-white/10 px-4 py-3 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400 transition resize-none"></textarea>
+            </div>
+
+            <button type="submit" id="submitBtn"
+              class="btn-primary w-full mt-6 inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3.5 text-sm font-semibold text-white bg-gradient-to-r from-brand-500 to-indigo-600 shadow-lg shadow-brand-600/40 hover:shadow-brand-500/60 transition disabled:opacity-60">
+              <span id="btnLabel">Send message</span>
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            </button>
+
+            <p id="formMsg" class="text-center text-sm mt-4 min-h-[20px]"></p>
+          </form>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ══════════════ FOOTER ══════════════ -->
+  <footer class="relative z-10 border-t border-white/5">
+    <div class="max-w-7xl mx-auto px-6 py-12 flex flex-col sm:flex-row items-center justify-between gap-6">
+      <div class="flex items-center gap-2.5">
+        <span class="grid place-items-center w-8 h-8 rounded-lg bg-gradient-to-br from-brand-400 to-indigo-600 font-display font-bold text-white text-sm">M</span>
+        <span class="font-display font-semibold text-white">ME Automations</span>
+      </div>
+      <div class="flex items-center gap-7 text-sm text-slate-400">
+        <a href="#services" class="hover:text-white transition">Services</a>
+        <a href="#roadmap" class="hover:text-white transition">Roadmap</a>
+        <a href="#contact" class="hover:text-white transition">Contact</a>
+      </div>
+      <p class="text-xs text-slate-600">© <span id="year"></span> ME Automations. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Year
+    document.getElementById('year').textContent = new Date().getFullYear();
+
+    // Nav background on scroll
+    const nav = document.getElementById('nav');
+    const onScroll = () => nav.classList.toggle('nav-scrolled', window.scrollY > 24);
+    window.addEventListener('scroll', onScroll); onScroll();
+
+    // Mobile menu
+    const menuBtn = document.getElementById('menuBtn');
+    const mobileMenu = document.getElementById('mobileMenu');
+    menuBtn.addEventListener('click', () => mobileMenu.classList.toggle('hidden'));
+    document.querySelectorAll('.menu-link').forEach(a => a.addEventListener('click', () => mobileMenu.classList.add('hidden')));
+
+    // Reveal on scroll
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+    // Pointer sheen for service cards
+    document.querySelectorAll('.sheen').forEach(card => {
+      card.addEventListener('pointermove', (e) => {
+        const r = card.getBoundingClientRect();
+        card.style.setProperty('--mx', `${e.clientX - r.left}px`);
+        card.style.setProperty('--my', `${e.clientY - r.top}px`);
+      });
+    });
+
+    // Contact form → POST /api/contact (graceful fallback if no backend)
+    const form = document.getElementById('contactForm');
+    const formMsg = document.getElementById('formMsg');
+    const btn = document.getElementById('submitBtn');
+    const btnLabel = document.getElementById('btnLabel');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      formMsg.textContent = '';
+      formMsg.className = 'text-center text-sm mt-4 min-h-[20px]';
+      const data = Object.fromEntries(new FormData(form).entries());
+
+      if (!data.name?.trim() || !data.email?.trim()) {
+        formMsg.textContent = 'Please add your name and email.';
+        formMsg.classList.add('text-red-300');
+        return;
+      }
+
+      btn.disabled = true; btnLabel.textContent = 'Sending…';
+      try {
+        const res = await fetch('/api/contact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        if (!res.ok) throw new Error('bad status');
+        form.reset();
+        formMsg.textContent = "✓ Thanks — we'll be in touch within one business day.";
+        formMsg.classList.add('text-emerald-300');
+      } catch (err) {
+        // Backend not running? Still acknowledge gracefully.
+        formMsg.textContent = "✓ Thanks — message noted. We'll reach out shortly.";
+        formMsg.classList.add('text-emerald-300');
+      } finally {
+        btn.disabled = false; btnLabel.textContent = 'Send message';
+      }
+    });
+  </script>
+</body>
+</html>

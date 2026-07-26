@@ -1,0 +1,52 @@
+{
+  "_comment": "Multi-tenant config. Each tenant = one business client. Edited via the admin portal (POST/PUT/DELETE /api/admin/clients) or by hand. Restart agent.py to pick up changes for live calls; server hot-reloads.",
+  "default": {
+    "name": "Default",
+    "language": "hi",
+    "agent_name": "Riya",
+    "business_type": "",
+    "role_description": "",
+    "lead_fields": "",
+    "closing_instructions": ""
+  },
+  "tenants": [
+    {
+      "id": "mumbai-realty",
+      "name": "Mumbai Realty",
+      "language": "hi",
+      "agent_name": "Riya",
+      "system_prompt": "",
+      "business_info": "Areas: Bandra, Andheri, Powai. Project: Skyline Heights 2/3BHK 1.8-3.2 Cr. Brokerage: 1%. Hours: Mon-Sat 10am-7pm.",
+      "greeting": "",
+      "phone_number": "",
+      "password": "mumbai123",
+      "whatsapp_to": "",
+      "minute_quota": 500,
+      "enforce_quota": false,
+      "active": true,
+      "business_type": "real estate agency",
+      "role_description": "a professional real estate consultant",
+      "lead_fields": "name,property_type,budget,location,timeline,notes",
+      "closing_instructions": ""
+    },
+    {
+      "id": "bangalore-properties",
+      "name": "Bangalore Properties",
+      "language": "en",
+      "agent_name": "Aisha",
+      "system_prompt": "",
+      "business_info": "",
+      "greeting": "",
+      "phone_number": "",
+      "password": "bangalore123",
+      "whatsapp_to": "",
+      "minute_quota": 0,
+      "enforce_quota": false,
+      "active": true,
+      "business_type": "real estate agency",
+      "role_description": "a professional real estate consultant",
+      "lead_fields": "name,property_type,budget,location,timeline,notes",
+      "closing_instructions": ""
+    }
+  ]
+}

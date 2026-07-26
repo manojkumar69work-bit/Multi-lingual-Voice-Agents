@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Calls · MEA Voice Agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    .modal.transcript-modal { width: 600px; display: flex; flex-direction: column; max-height: 80vh; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1>My Calls</h1>
+        <div class="sub" id="who"></div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" onclick="exportCsv()">Export leads CSV</button>
+      <button class="btn ghost" onclick="load()">Refresh</button>
+      <button class="btn ghost" onclick="logout()">Sign out</button>
+    </div>
+  </header>
+
+  <div class="stat-grid c4">
+    <div class="stat-card"><div class="num" id="sCalls">0</div><div class="label">Total calls</div></div>
+    <div class="stat-card is-amber"><div class="num" id="sActive">0</div><div class="label">Active now</div></div>
+    <div class="stat-card is-blue">
+      <div class="num" id="sMinutes">0</div><div class="label" id="minLabel">Minutes this month</div>
+      <div class="quota-bar" id="quotaWrap" style="display:none"><div id="quotaFill" style="width:0%"></div></div>
+    </div>
+    <div class="stat-card is-violet"><div class="num" id="sLeads">0</div><div class="label">Leads captured</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Active calls</h2><span class="count" id="activeCount"></span></div>
+    <div id="activeList"><div class="empty">No active calls</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Call history</h2><span class="count" id="histCount"></span></div>
+    <div id="historyList"><div class="empty">No completed calls yet</div></div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="modal transcript-modal">
+    <div class="modal-head"><h3>Transcript</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-body" id="transcriptBody"></div>
+  </div>
+</div>
+
+<script>
+let CALLS = [];
+
+async function guard() {
+  const r = await fetch('/api/auth/me');
+  if (!r.ok) { location.href = '/login'; return false; }
+  const u = await r.json();
+  if (u.role !== 'client') { location.href = '/admin'; return false; }
+  document.getElementById('who').textContent = u.name || u.client_id;
+  return true;
+}
+async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+function fmtMin(m) { return (m || 0).toFixed(1); }
+
+async function load() {
+  const [stats, calls] = await Promise.all([
+    fetch('/api/client/stats').then(r => r.json()),
+    fetch('/api/client/calls').then(r => r.json()),
+  ]);
+
+  document.getElementById('sCalls').textContent = stats.calls || 0;
+  document.getElementById('sActive').textContent = stats.active || 0;
+  document.getElementById('sMinutes').textContent = fmtMin(stats.month_minutes);
+  document.getElementById('sLeads').textContent = stats.lead_count || 0;
+
+  if (stats.minute_quota && stats.minute_quota > 0) {
+    document.getElementById('quotaWrap').style.display = 'block';
+    const pct = Math.min(100, (stats.month_minutes / stats.minute_quota) * 100);
+    document.getElementById('quotaFill').style.width = pct + '%';
+    document.getElementById('minLabel').textContent = `Minutes this month · ${fmtMin(stats.month_minutes)} / ${stats.minute_quota}`;
+  }
+
+  const active = calls.active || [];
+  const history = calls.recent || [];
+  CALLS = [...active, ...history];
+
+  document.getElementById('activeCount').textContent = active.length ? `(${active.length})` : '';
+  document.getElementById('histCount').textContent = history.length ? `(${history.length})` : '';
+
+  document.getElementById('activeList').innerHTML = active.length
+    ? active.map(c => renderCall(c, true)).join('')
+    : '<div class="empty">No active calls</div>';
+  document.getElementById('historyList').innerHTML = history.length
+    ? history.map(c => renderCall(c, false)).join('')
+    : '<div class="empty">No completed calls yet</div>';
+}
+
+function renderCall(c, live) {
+  const ld = c.lead_data || {};
+  const chips = Object.entries(ld).filter(([k, v]) => v && k !== 'notes').map(([k, v]) => {
+    const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return `<span class="chip"><b>${label}:</b> ${esc(v)}</span>`;
+  }).join('');
+  const when = c.created_at ? new Date(c.created_at).toLocaleString() : '—';
+  const dur = Math.round(c.duration_seconds || 0);
+  const badge = live
+    ? '<span class="badge active"><span class="dot live"></span>In progress</span>'
+    : '<span class="badge completed">Completed</span>' + (c.lead_submitted ? ' <span class="badge sent">Lead sent</span>' : '');
+  const audio = (!live && c.recording_path)
+    ? `<audio controls preload="none" src="/api/recordings/${encodeURIComponent(c.session_id)}"></audio>` : '';
+  const transcriptBtn = (c.transcript && c.transcript.length)
+    ? `<button class="btn ghost sm" onclick="openTranscript('${c.session_id}')">View transcript</button>` : '';
+  return `<div class="call-card ${live ? 'live' : ''}">
+    <div class="call-head">
+      <div class="meta">${when} · ${dur}s</div>
+      <div class="status-row">${badge}</div>
+    </div>
+    ${c.summary ? `<div class="summary">${esc(c.summary)}</div>` : (live ? '' : '<div class="summary empty-note">No summary.</div>')}
+    ${chips ? `<div class="lead-chips">${chips}</div>` : ''}
+    ${audio}
+    ${transcriptBtn ? `<div class="call-actions">${transcriptBtn}</div>` : ''}
+  </div>`;
+}
+
+async function openTranscript(sessionId) {
+  const c = CALLS.find(x => x.session_id === sessionId);
+  let transcript = c && c.transcript;
+  if (!transcript) {
+    const d = await fetch('/api/client/calls/' + encodeURIComponent(sessionId)).then(r => r.json());
+    transcript = d.transcript || [];
+  }
+  const body = document.getElementById('transcriptBody');
+  body.innerHTML = (transcript || []).map(m => {
+    const role = m.role === 'user' ? 'user' : 'assistant';
+    const who = role === 'user' ? 'Caller' : 'Agent';
+    return `<div class="msg ${role}"><div class="role">${who}</div><div class="bubble">${esc(m.content)}</div></div>`;
+  }).join('') || '<div class="empty">No transcript.</div>';
+  document.getElementById('overlay').classList.add('show');
+}
+function closeModal() { document.getElementById('overlay').classList.remove('show'); }
+
+function exportCsv() {
+  const leads = CALLS.filter(c => c.lead_extracted && c.lead_data && Object.keys(c.lead_data).length);
+  if (!leads.length) { alert('No leads to export yet.'); return; }
+  // Collect all unique keys across all leads, preserving insertion order by first appearance
+  const allKeys = [];
+  const seen = new Set();
+  for (const c of leads) {
+    for (const k of Object.keys(c.lead_data || {})) {
+      if (!seen.has(k)) { seen.add(k); allKeys.push(k); }
+    }
+  }
+  const header = ['date', ...allKeys, 'duration_s', 'summary'];
+  const rows = leads.map(c => {
+    const ld = c.lead_data || {};
+    const vals = [c.created_at || '', ...allKeys.map(k => ld[k] || ''), Math.round(c.duration_seconds || 0), (c.summary || '').replace(/\n/g, ' ')];
+    return vals.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
+  });
+  const csv = [header.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'leads.csv';
+  a.click();
+}
+
+(async () => { if (await guard()) load(); })();
+setInterval(() => { if (!document.getElementById('overlay').classList.contains('show')) load(); }, 5000);
+</script>
+</body>
+</html>

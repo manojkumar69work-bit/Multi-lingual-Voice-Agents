@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in · MEA Voice Agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    body { display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .auth {
+      width: 100%; max-width: 392px;
+      background: linear-gradient(180deg, var(--raised), var(--panel));
+      border: 1px solid var(--line-2); border-radius: 18px;
+      padding: 30px 30px 26px; box-shadow: 0 30px 80px -28px rgba(0,0,0,.85);
+    }
+    .auth .brand { margin-bottom: 22px; }
+    .auth .brand h1 { font-size: 18px; }
+    .field-group { margin-top: 4px; }
+    .auth .btn { width: 100%; margin-top: 22px; padding: 11px; font-size: 14.5px; }
+    .auth .err { text-align: center; }
+    .auth .hint {
+      color: var(--faint); font-size: 11.5px; margin-top: 20px;
+      text-align: center; line-height: 1.6; padding-top: 18px; border-top: 1px solid var(--line);
+    }
+  </style>
+</head>
+<body>
+  <form class="auth" id="form">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1>MEA Voice Agent</h1>
+        <div class="sub">Sign in to your portal</div>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <label for="u">Username</label>
+      <input id="u" autocomplete="username" placeholder="admin or your client id" autofocus />
+      <label for="p">Password</label>
+      <input id="p" type="password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+
+    <button type="submit" class="btn">Sign in</button>
+    <div class="err" id="err"></div>
+    <div class="hint">Admins manage clients · Clients view their calls &amp; leads</div>
+  </form>
+
+  <script>
+    const form = document.getElementById('form');
+    const err = document.getElementById('err');
+
+    // If already logged in, skip straight to the right portal.
+    fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(u => {
+      if (u && u.role) location.href = u.role === 'admin' ? '/admin' : '/client';
+    }).catch(() => {});
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const username = document.getElementById('u').value.trim();
+      const password = document.getElementById('p').value;
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          err.textContent = d.detail || 'Login failed';
+          return;
+        }
+        const u = await res.json();
+        location.href = u.role === 'admin' ? '/admin' : '/client';
+      } catch (e) {
+        err.textContent = 'Network error';
+      }
+    });
+  </script>
+</body>
+</html>

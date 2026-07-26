@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard · MEA Voice Agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    .refresh { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+    .refresh .ts { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1>Voice Agent <span class="tag">Dashboard</span></h1>
+        <div class="sub">Global view · all clients</div>
+      </div>
+    </div>
+    <div class="refresh">
+      <span>Updated <span class="ts" id="lastUpdate">—</span></span>
+      <button class="btn ghost sm" onclick="fetchData()">Refresh</button>
+    </div>
+  </header>
+
+  <div class="stat-grid c3" id="stats">
+    <div class="stat-card is-amber"><div class="num" id="activeCount">0</div><div class="label">Active calls</div></div>
+    <div class="stat-card"><div class="num" id="completedCount">0</div><div class="label">Completed calls</div></div>
+    <div class="stat-card is-blue"><div class="num" id="leadCount">0</div><div class="label">Leads captured</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Active calls</h2><span class="count" id="activeLabel"></span></div>
+    <div id="activeCalls"><div class="empty">No active calls</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Recent calls</h2><span class="count" id="recentLabel"></span></div>
+    <div id="recentCalls"><div class="empty">No completed calls yet</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Captured leads</h2><span class="count" id="leadLabel"></span></div>
+    <div id="leadTable"><div class="empty">No leads yet</div></div>
+  </div>
+</div>
+
+<script>
+async function fetchData() {
+  try {
+    const res = await fetch('/api/dashboard/calls');
+    const data = await res.json();
+    render(data);
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('lastUpdate').textContent = 'error';
+  }
+}
+
+function render(data) {
+  const active = data.active || [];
+  const recent = data.recent || [];
+  const leads = [...active, ...recent].filter(c => c.lead_extracted && Object.keys(c.lead_data).length > 0);
+
+  document.getElementById('activeCount').textContent = active.length;
+  document.getElementById('completedCount').textContent = data.total_completed;
+  document.getElementById('leadCount').textContent = leads.length;
+  document.getElementById('activeLabel').textContent = `(${active.length})`;
+  document.getElementById('recentLabel').textContent = `(${recent.length})`;
+  document.getElementById('leadLabel').textContent = `(${leads.length})`;
+
+  // Active calls
+  const activeEl = document.getElementById('activeCalls');
+  if (active.length === 0) {
+    activeEl.innerHTML = '<div class="empty">No active calls</div>';
+  } else {
+    activeEl.innerHTML = active.map(c => `
+      <div class="call-card live">
+        <div class="call-head">
+          <div>
+            <div class="status-row"><span class="dot live"></span><span class="room">${c.room_name || c.session_id}</span></div>
+            <div class="meta" style="margin-top:5px">Started ${c.created_at ? new Date(c.created_at).toLocaleString() : '—'} · ${Math.floor(c.duration_seconds || 0)}s</div>
+          </div>
+          <span class="badge active">In progress</span>
+        </div>
+        ${c.lead_extracted ? `<div class="lead-chips">${renderLeadChips(c.lead_data)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  // Recent calls
+  const recentEl = document.getElementById('recentCalls');
+  if (recent.length === 0) {
+    recentEl.innerHTML = '<div class="empty">No completed calls yet</div>';
+  } else {
+    recentEl.innerHTML = recent.map(c => `
+      <div class="call-card">
+        <div class="call-head">
+          <div>
+            <div class="room">${c.room_name || c.session_id}</div>
+            <div class="meta" style="margin-top:4px">${c.created_at ? new Date(c.created_at).toLocaleString() : '—'} · ${Math.floor(c.duration_seconds || 0)}s</div>
+          </div>
+          <div class="status-row">
+            ${c.lead_submitted ? '<span class="badge submitted">Lead sent</span>' : ''}
+            <span class="badge completed">Completed</span>
+          </div>
+        </div>
+        ${c.lead_extracted ? `<div class="lead-chips">${renderLeadChips(c.lead_data)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  // Lead table
+  const leadEl = document.getElementById('leadTable');
+  if (leads.length === 0) {
+    leadEl.innerHTML = '<div class="empty">No leads yet</div>';
+  } else {
+    // Collect all unique keys across all leads for dynamic headers
+    const allKeys = [];
+    const seen = new Set();
+    for (const c of leads) {
+      for (const k of Object.keys(c.lead_data || {})) {
+        if (!seen.has(k)) { seen.add(k); allKeys.push(k); }
+      }
+    }
+    const headers = allKeys.map(k => k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+    leadEl.innerHTML = `
+      <div class="panel">
+        <table class="data-table">
+          <thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}<th>Status</th></tr></thead>
+          <tbody>
+            ${leads.map(c => {
+              const ld = c.lead_data || {};
+              return `<tr>
+                ${allKeys.map(k => `<td>${ld[k] || '—'}</td>`).join('')}
+                <td>${c.lead_submitted ? '<span class="badge submitted">Sent</span>' : '<span class="badge new">New</span>'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+}
+
+function renderLeadChips(ld) {
+  return Object.entries(ld).filter(([k, v]) => v && k !== 'notes').map(([k, v]) => {
+    const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return `<span class="chip"><b>${label}:</b> ${v}</span>`;
+  }).join('');
+}
+
+fetchData();
+setInterval(fetchData, 5000);
+</script>
+</body>
+</html>

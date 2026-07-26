@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin · MEA Voice Agent</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <style>
+    .drawer-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; }
+    .drawer-list { padding: 14px; }
+    /* admin call cards sit on the panel, so nest them on the inset surface */
+    #callsList .call-card { background: var(--inset); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1>Voice Agent <span class="tag">Admin</span></h1>
+        <div class="sub">Manage clients &amp; usage</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn" onclick="openCreate()">+ Add client</button>
+      <button class="btn ghost" onclick="location.href='/dashboard'">Global dashboard</button>
+      <button class="btn ghost" onclick="logout()">Sign out</button>
+    </div>
+  </header>
+
+  <div class="stat-grid c5" id="stats">
+    <div class="stat-card"><div class="num" id="sClients">0</div><div class="label">Clients</div></div>
+    <div class="stat-card"><div class="num" id="sCalls">0</div><div class="label">Total calls</div></div>
+    <div class="stat-card is-amber"><div class="num" id="sActive">0</div><div class="label">Active now</div></div>
+    <div class="stat-card is-blue"><div class="num" id="sMinutes">0</div><div class="label">Total minutes</div></div>
+    <div class="stat-card is-violet"><div class="num" id="sLeads">0</div><div class="label">Leads</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2>Clients</h2></div>
+    <div class="panel">
+      <table class="data-table">
+        <thead>
+          <tr><th>Agency</th><th>Client ID</th><th>Lang</th><th>Agent</th><th class="num">Calls</th><th class="num">Active</th><th>Minutes (mo / total)</th><th>Quota</th><th class="num">Leads</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody id="clientRows"><tr><td colspan="11" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="callsPanel" style="display:none" class="section">
+    <div class="drawer-title"><h2 id="callsTitle">Calls</h2><button class="btn ghost sm" onclick="hideCalls()">Close</button></div>
+    <div class="panel drawer-list"><div id="callsList"></div></div>
+  </div>
+</div>
+
+<!-- Add/Edit modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-head"><h3 id="modalTitle">Add client</h3><button class="x" onclick="closeModal()">×</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="f_id" />
+      <div class="grid2">
+        <div><label>Agency name</label><input id="f_name" placeholder="Mumbai Realty" /></div>
+        <div><label>Login id (slug)</label><input id="f_slug" placeholder="auto from name" /><div class="field-hint">Used as the login username. Leave blank to auto-generate.</div></div>
+      </div>
+      <div class="grid2">
+        <div><label>Agent name</label><input id="f_agent" placeholder="Riya" /></div>
+        <div><label>Agent role description</label><input id="f_role_description" placeholder="e.g. a polite medical receptionist" /></div>
+      </div>
+      <div class="grid2">
+        <div><label>Business type</label><input id="f_business_type" placeholder="e.g. medical clinic, car dealership, real estate" /></div>
+        <div><label>Language</label><select id="f_language"><option value="hi">Hinglish (hi)</option><option value="en">English (en)</option><option value="te">Telugu (te)</option></select></div>
+      </div>
+      <label>Lead fields (comma-separated) <span class="muted">(what the AI should collect — blank uses name, notes)</span></label>
+      <input id="f_lead_fields" placeholder="name,property_type,budget,location,timeline,notes" />
+      <label>Custom system prompt <span class="muted">(optional — blank uses the built-in template)</span></label>
+      <textarea id="f_prompt" placeholder="You are Riya, a warm real estate consultant for Mumbai Realty…"></textarea>
+      <label>Business info <span class="muted">(optional — the agent uses this to answer caller questions)</span></label>
+      <textarea id="f_business" placeholder="Areas served: Bandra, Andheri, Powai.&#10;Flagship project: Skyline Heights — 2/3BHK, 1.8–3.2 Cr.&#10;Office hours: Mon–Sat 10am–7pm.&#10;Brokerage: 1% of deal value. RERA: P51900012345."></textarea>
+      <div class="field-hint">Facts the agent can tell callers — areas, projects, pricing, office hours, RERA no. One fact per line works best.</div>
+      <label>Custom greeting <span class="muted">(optional)</span></label>
+      <input id="f_greeting" placeholder="Namaste! Mumbai Realty mein aapka swagat hai…" />
+      <label>Closing instructions <span class="muted">(optional — how the agent should end the call)</span></label>
+      <textarea id="f_closing_instructions" placeholder="Once you have gathered all details, ask if they would like a site visit. Do not push. Acknowledge and say a colleague will call back."></textarea>
+      <div class="grid2">
+        <div><label>Login password</label><input id="f_password" placeholder="set a password" /></div>
+        <div><label>Lead-alert WhatsApp <span class="muted">(optional)</span></label><input id="f_whatsapp" placeholder="+9198XXXXXXXX" /></div>
+      </div>
+      <div class="grid2">
+        <div><label>Monthly minute quota <span class="muted">(0 = unlimited)</span></label><input id="f_quota" type="number" min="0" value="0" /></div>
+        <div><label>Phone number <span class="muted">(SIP DID, later)</span></label><input id="f_phone" placeholder="+9122XXXXXXXX" /></div>
+      </div>
+      <div class="checkbox"><input type="checkbox" id="f_enforce" /><label>Enforce quota (decline calls over the cap)</label></div>
+      <div class="checkbox"><input type="checkbox" id="f_active" checked /><label>Active</label></div>
+      <div class="err" id="modalErr"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" id="saveBtn" onclick="saveClient()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let CLIENTS = [];
+
+async function guard() {
+  const r = await fetch('/api/auth/me');
+  if (!r.ok) { location.href = '/login'; return false; }
+  const u = await r.json();
+  if (u.role !== 'admin') { location.href = '/client'; return false; }
+  return true;
+}
+
+async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
+
+function fmtMin(m) { return (m || 0).toFixed(1); }
+
+async function load() {
+  const [ov, cl] = await Promise.all([
+    fetch('/api/admin/overview').then(r => r.json()),
+    fetch('/api/admin/clients').then(r => r.json()),
+  ]);
+  document.getElementById('sClients').textContent = ov.total_clients;
+  document.getElementById('sCalls').textContent = ov.total_calls;
+  document.getElementById('sActive').textContent = ov.total_active;
+  document.getElementById('sMinutes').textContent = fmtMin(ov.total_minutes);
+  document.getElementById('sLeads').textContent = ov.total_leads;
+
+  CLIENTS = cl.clients || [];
+  const rows = document.getElementById('clientRows');
+  if (!CLIENTS.length) { rows.innerHTML = '<tr><td colspan="11" class="empty">No clients yet. Click “Add client”.</td></tr>'; return; }
+  rows.innerHTML = CLIENTS.map(c => `
+    <tr class="clickable" onclick="showCalls('${c.id}', event)">
+      <td><strong>${esc(c.name || c.id)}</strong></td>
+      <td class="muted">${esc(c.id)}</td>
+      <td><span class="pill lang">${c.language}</span></td>
+      <td>${esc(c.agent_name || '—')}</td>
+      <td class="num">${c.calls}</td>
+      <td class="num">${c.active_calls ? '<span class="pill on">'+c.active_calls+'</span>' : '0'}</td>
+      <td class="num">${fmtMin(c.month_minutes)} / ${fmtMin(c.total_minutes)}</td>
+      <td>${c.minute_quota ? c.minute_quota + (c.enforce_quota ? ' ⛔' : '') : '<span class="muted">∞</span>'}</td>
+      <td class="num">${c.lead_count}</td>
+      <td>${renderStatus(c)}</td>
+      <td onclick="event.stopPropagation()">
+        <div class="row-actions">
+          <button class="btn ghost sm" onclick="openEdit('${c.id}')">Edit</button>
+          <button class="btn danger sm" onclick="del('${c.id}')">Del</button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function renderStatus(c) {
+  return c.active === false ? '<span class="pill off">off</span>' : '<span class="pill on">on</span>';
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+// ── Modal ──
+function openCreate() {
+  document.getElementById('modalTitle').textContent = 'Add client';
+  ['f_id','f_name','f_slug','f_agent','f_role_description','f_business_type','f_lead_fields','f_prompt','f_business','f_greeting','f_closing_instructions','f_password','f_whatsapp','f_phone'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('f_quota').value = 0;
+  document.getElementById('f_language').value = 'hi';
+  document.getElementById('f_enforce').checked = false;
+  document.getElementById('f_active').checked = true;
+  document.getElementById('f_slug').disabled = false;
+  document.getElementById('modalErr').textContent = '';
+  document.getElementById('overlay').classList.add('show');
+}
+
+function openEdit(id) {
+  const c = CLIENTS.find(x => x.id === id); if (!c) return;
+  document.getElementById('modalTitle').textContent = 'Edit ' + (c.name || c.id);
+  document.getElementById('f_id').value = c.id;
+  document.getElementById('f_name').value = c.name || '';
+  document.getElementById('f_slug').value = c.id;
+  document.getElementById('f_slug').disabled = true; // id is the key; don't change on edit
+  document.getElementById('f_language').value = c.language || 'hi';
+  document.getElementById('f_agent').value = c.agent_name || '';
+  document.getElementById('f_role_description').value = c.role_description || '';
+  document.getElementById('f_business_type').value = c.business_type || '';
+  document.getElementById('f_lead_fields').value = c.lead_fields || '';
+  document.getElementById('f_prompt').value = c.system_prompt || '';
+  document.getElementById('f_business').value = c.business_info || '';
+  document.getElementById('f_greeting').value = c.greeting || '';
+  document.getElementById('f_closing_instructions').value = c.closing_instructions || '';
+  document.getElementById('f_password').value = c.password || '';
+  document.getElementById('f_whatsapp').value = c.whatsapp_to || '';
+  document.getElementById('f_phone').value = c.phone_number || '';
+  document.getElementById('f_quota').value = c.minute_quota || 0;
+  document.getElementById('f_enforce').checked = !!c.enforce_quota;
+  document.getElementById('f_active').checked = c.active !== false;
+  document.getElementById('modalErr').textContent = '';
+  document.getElementById('overlay').classList.add('show');
+}
+
+function closeModal() { document.getElementById('overlay').classList.remove('show'); }
+
+async function saveClient() {
+  const id = document.getElementById('f_id').value;
+  const body = {
+    name: document.getElementById('f_name').value.trim(),
+    language: document.getElementById('f_language').value,
+    agent_name: document.getElementById('f_agent').value.trim(),
+    role_description: document.getElementById('f_role_description').value.trim(),
+    business_type: document.getElementById('f_business_type').value.trim(),
+    lead_fields: document.getElementById('f_lead_fields').value.trim(),
+    system_prompt: document.getElementById('f_prompt').value,
+    business_info: document.getElementById('f_business').value,
+    greeting: document.getElementById('f_greeting').value,
+    closing_instructions: document.getElementById('f_closing_instructions').value,
+    password: document.getElementById('f_password').value,
+    whatsapp_to: document.getElementById('f_whatsapp').value.trim(),
+    phone_number: document.getElementById('f_phone').value.trim(),
+    minute_quota: parseInt(document.getElementById('f_quota').value || '0', 10),
+    enforce_quota: document.getElementById('f_enforce').checked,
+    active: document.getElementById('f_active').checked,
+  };
+  const slug = document.getElementById('f_slug').value.trim();
+  if (slug) body.id = slug;
+  const err = document.getElementById('modalErr');
+  err.textContent = '';
+  const url = id ? '/api/admin/clients/' + encodeURIComponent(id) : '/api/admin/clients';
+  const method = id ? 'PUT' : 'POST';
+  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); err.textContent = d.detail || 'Save failed'; return; }
+  closeModal(); load();
+}
+
+async function del(id) {
+  if (!confirm('Delete client "' + id + '"? Their past calls remain in the database.')) return;
+  const res = await fetch('/api/admin/clients/' + encodeURIComponent(id), { method: 'DELETE' });
+  if (res.ok) load(); else alert('Delete failed');
+}
+
+// ── Calls drawer ──
+async function showCalls(id) {
+  const c = CLIENTS.find(x => x.id === id);
+  document.getElementById('callsTitle').textContent = 'Calls · ' + (c ? (c.name || c.id) : id);
+  document.getElementById('callsPanel').style.display = 'block';
+  document.getElementById('callsPanel').scrollIntoView({ behavior: 'smooth' });
+  const list = document.getElementById('callsList');
+  list.innerHTML = '<div class="empty">Loading…</div>';
+  const data = await fetch('/api/admin/clients/' + encodeURIComponent(id) + '/calls').then(r => r.json());
+  const calls = [...(data.active || []), ...(data.recent || [])];
+  if (!calls.length) { list.innerHTML = '<div class="empty">No calls yet for this client.</div>'; return; }
+  list.innerHTML = calls.map(renderCall).join('');
+}
+function hideCalls() { document.getElementById('callsPanel').style.display = 'none'; }
+
+function renderCall(c) {
+  const ld = c.lead_data || {};
+  const chips = Object.entries(ld).filter(([k, v]) => v && k !== 'notes').map(([k, v]) => {
+    const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    return `<span class="chip"><b>${label}:</b> ${esc(v)}</span>`;
+  }).join('');
+  const when = c.created_at ? new Date(c.created_at).toLocaleString() : '—';
+  const dur = Math.round(c.duration_seconds || 0);
+  const audio = c.recording_path ? `<audio controls preload="none" src="/api/recordings/${encodeURIComponent(c.session_id)}"></audio>` : '';
+  return `<div class="call-card">
+    <div class="meta">${when} · ${dur}s · ${c.status}${c.lead_submitted ? ' · lead sent' : ''}</div>
+    ${c.summary ? `<div class="summary">${esc(c.summary)}</div>` : ''}
+    ${chips ? `<div class="lead-chips">${chips}</div>` : ''}
+    ${audio}
+  </div>`;
+}
+
+(async () => { if (await guard()) load(); })();
+setInterval(() => { if (document.getElementById('overlay').classList.contains('show')) return; load(); }, 10000);
+</script>
+</body>
+</html>

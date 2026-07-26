@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Sarvam Voice Samples</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; padding: 30px; }
+h1 { color: #10b981; margin-bottom: 5px; }
+.subtitle { opacity: .7; margin-bottom: 25px; font-size: 14px; }
+.lang-section { margin-bottom: 40px; }
+.lang-header { color: #fbbf24; font-size: 22px; margin-bottom: 15px; display: flex; align-items: center; gap: 12px; }
+.lang-header .text { font-size: 14px; font-weight: normal; color: #94a3b8; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.card { background: #1e293b; border-radius: 10px; padding: 12px; border: 1px solid #334155; }
+.card.current { border-color: #10b981; background: #1a2e3b; }
+.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.card-header .name { font-weight: 600; font-size: 15px; }
+.card-header .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #334155; color: #94a3b8; }
+.card.current .badge { background: #10b981; color: #0f172a; font-weight: 600; }
+.card audio { width: 100%; height: 36px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>Sarvam Bulbul v3 — Voice Showcase</h1>
+<p class="subtitle">37 speakers × Hindi & Telugu. Pick your favorites.</p>
+<div id="app"></div>
+<script>
+const MANIFEST = null;
+const CURRENT = { hi: 'roopa', te: 'ritu' };
+const TEXTS = { hi: 'नमस्ते! मैं आपकी कैसे मदद कर सकता हूं? कृपया अपना सवाल पूछें।', te: 'నమస్కారం! నేను మీకు ఎలా సహాయం చేయగలను? దయచేసి మీ ప్రశ్న అడగండి.' };
+
+async function load() {
+  const res = await fetch('/demo/voice/sarvam/manifest.json');
+  const data = await res.json();
+  const app = document.getElementById('app');
+  const langs = ['hi', 'te'];
+  const langNames = { hi: 'Hindi (हिंदी)', te: 'Telugu (తెలుగు)' };
+
+  for (const lang of langs) {
+    const section = document.createElement('div');
+    section.className = 'lang-section';
+    section.innerHTML = `<div class="lang-header">${langNames[lang]} <span class="text">${TEXTS[lang]}</span></div><div class="grid"></div>`;
+    const grid = section.querySelector('.grid');
+
+    for (const item of data[lang]) {
+      const card = document.createElement('div');
+      card.className = 'card' + (item.speaker === CURRENT[lang] ? ' current' : '');
+      card.innerHTML = `
+        <div class="card-header">
+          <span class="name">${item.speaker}</span>
+          <span class="badge">${item.speaker === CURRENT[lang] ? 'CURRENT' : (item.size > 200000 ? 'high' : 'std')}</span>
+        </div>
+        <audio controls src="/demo/voice/${item.file}" preload="none"></audio>
+      `;
+      grid.appendChild(card);
+    }
+    app.appendChild(section);
+  }
+}
+load();
+</script>
+</body>
+</html>

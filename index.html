@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Call · Live Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@1/dist/livekit-client.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      color-scheme: dark;
+      --bg: #0a0c12; --panel: #12151d; --raised: #171b25; --inset: #0d1018;
+      --line: rgba(255,255,255,.07); --line-2: rgba(255,255,255,.12);
+      --text: #e7eaf0; --muted: #8b93a7; --faint: #5a6376;
+      --accent: #6366f1; --accent-hov: #4f46e5; --accent-soft: #818cf8; --ring: rgba(99,102,241,.35);
+      --green: #34d399; --red: #f87171; --blue: #60a5fa; --amber: #fbbf24;
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px; position: relative;
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(ellipse 90% 70% at 50% -10%, #000 30%, transparent 100%);
+    }
+    body::after {
+      content: ''; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(820px 440px at 100% -5%, rgba(99,102,241,.08), transparent 60%),
+        radial-gradient(720px 400px at -5% 0%, rgba(129,140,248,.05), transparent 55%);
+    }
+
+    .app {
+      position: relative; z-index: 1;
+      width: 100%;
+      max-width: 1080px;
+      height: min(680px, calc(100vh - 48px));
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 60px -24px rgba(0,0,0,.8);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ───── LEFT: call panel ───── */
+    .call-panel { padding: 24px 22px; background: linear-gradient(180deg, var(--raised), var(--panel)); }
+    .brand { display: flex; align-items: center; gap: 11px; margin-bottom: 4px; }
+    .brand .logo {
+      width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+      background: linear-gradient(150deg, var(--accent-soft), var(--accent-hov)); font-weight: 800; color: #fff;
+      box-shadow: 0 6px 18px -6px rgba(99,102,241,.7);
+    }
+    .brand h1 { font-size: 16px; font-weight: 650; letter-spacing: -.02em; }
+    .brand p { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+    .lang-block { margin-top: 24px; }
+    .lang-label {
+      font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+      color: var(--faint); margin-bottom: 9px; display: flex; align-items: center; gap: 7px; font-weight: 600;
+    }
+    .lang-label .lock { font-size: 11px; opacity: .8; letter-spacing: 0; text-transform: none; color: var(--muted); }
+    .lang-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .lang-btn {
+      border: 1px solid var(--line);
+      background: var(--inset);
+      color: var(--text);
+      padding: 11px 6px; border-radius: 10px; cursor: pointer;
+      font-size: 13px; font-weight: 600; text-align: center;
+      transition: border-color .16s, background .16s, transform .12s; line-height: 1.3;
+    }
+    .lang-btn .sub { display: block; font-size: 10px; font-weight: 500; color: var(--faint); margin-top: 2px; }
+    .lang-btn:hover { border-color: var(--line-2); transform: translateY(-1px); }
+    .lang-btn.active {
+      border-color: rgba(99,102,241,.5);
+      background: rgba(99,102,241,.12);
+      box-shadow: 0 0 0 3px var(--ring);
+    }
+    .lang-btn.active .sub { color: var(--accent-soft); }
+    .lang-btn:disabled { cursor: not-allowed; opacity: .5; }
+    .lang-hint { font-size: 11px; color: var(--muted); margin-top: 11px; min-height: 15px; }
+
+    .stage {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px; padding: 10px 0;
+    }
+    .avatar-ring {
+      width: 132px; height: 132px; border-radius: 50%;
+      display: grid; place-items: center; position: relative; transition: all .5s;
+      border: 1px solid var(--line);
+    }
+    .avatar-ring.idle { background: rgba(255,255,255,.03); }
+    .avatar-ring.connecting { background: rgba(251,191,36,.08); animation: spin 2s linear infinite; }
+    .avatar-ring.connected { background: rgba(52,211,153,.08); border-color: rgba(52,211,153,.25); }
+    .avatar-ring.speaking { background: rgba(99,102,241,.14); border-color: rgba(99,102,241,.4); box-shadow: 0 0 44px rgba(99,102,241,.28); }
+    .avatar-ring.listening { background: rgba(251,191,36,.1); border-color: rgba(251,191,36,.3); box-shadow: 0 0 44px rgba(251,191,36,.18); animation: pulse 1.5s infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100% { box-shadow: 0 0 20px rgba(251,191,36,.1); } 50% { box-shadow: 0 0 52px rgba(251,191,36,.32); } }
+    .avatar-ring .icon { font-size: 50px; }
+
+    .status { font-size: 14px; font-weight: 600; color: var(--muted); transition: color .3s; }
+    .status.connected { color: var(--green); }
+    .status.speaking { color: var(--accent-soft); }
+    .status.listening { color: var(--amber); }
+    .timer {
+      font-size: 30px; font-weight: 300; letter-spacing: .04em;
+      font-variant-numeric: tabular-nums; color: var(--faint); display: none;
+    }
+    .timer.show { display: block; }
+
+    .controls { display: flex; justify-content: center; padding-top: 4px; }
+    .call-btn {
+      width: 72px; height: 72px; border-radius: 50%; border: none; cursor: pointer;
+      display: grid; place-items: center; transition: transform .15s, background .2s; position: relative;
+    }
+    .call-btn:hover { transform: scale(1.05); }
+    .call-btn:active { transform: scale(.95); }
+    .call-btn.idle { background: var(--green); box-shadow: 0 6px 26px -6px rgba(52,211,153,.55); }
+    .call-btn.idle:hover { background: #10b981; }
+    .call-btn.active { background: var(--red); box-shadow: 0 6px 26px -6px rgba(248,113,113,.55); }
+    .call-btn.active:hover { background: #ef4444; }
+    .call-btn:disabled { opacity: .6; cursor: wait; }
+    .call-btn svg { width: 28px; height: 28px; stroke: #fff; fill: none; stroke-width: 2; }
+    .call-btn .ring {
+      position: absolute; inset: -6px; border-radius: 50%;
+      border: 2px solid rgba(52,211,153,.45); animation: wave 2s infinite;
+    }
+    .call-btn.active .ring { border-color: rgba(248,113,113,.45); }
+    @keyframes wave { 0% { transform: scale(1); opacity: 1; } to { transform: scale(1.5); opacity: 0; } }
+
+    .error {
+      color: #fca5a5; font-size: 12px; text-align: center; padding: 8px 14px;
+      background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.25);
+      border-radius: 10px; display: none; margin-top: 4px;
+    }
+    .error.show { display: block; }
+
+    /* ───── RIGHT: transcript panel ───── */
+    .ts-head {
+      padding: 17px 20px; border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--inset);
+    }
+    .ts-head .t { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
+    .ts-head .t span { color: var(--muted); font-weight: 500; }
+    .ts-meta { display: flex; align-items: center; gap: 8px; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+      background: rgba(99,102,241,.14); color: var(--accent-soft); border: 1px solid rgba(99,102,241,.28);
+    }
+    .live-dot {
+      display: none; align-items: center; gap: 6px; font-size: 11px; color: var(--green); font-weight: 600;
+    }
+    .live-dot.show { display: inline-flex; }
+    .live-dot i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 1.3s infinite; }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+    .transcript {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding: 18px 20px; display: flex; flex-direction: column; gap: 11px; scroll-behavior: smooth;
+    }
+    .empty {
+      margin: auto; text-align: center; color: var(--muted); max-width: 280px;
+    }
+    .empty .big { font-size: 40px; margin-bottom: 12px; opacity: .6; }
+    .empty p { font-size: 13px; line-height: 1.6; }
+
+    .msg {
+      max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 13.5px;
+      line-height: 1.5; word-wrap: break-word; white-space: pre-wrap; animation: in .22s ease;
+    }
+    @keyframes in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+    .msg .who {
+      display: block; font-size: 10px; opacity: .65; margin-bottom: 3px;
+      font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+    }
+    .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+    .msg.agent { align-self: flex-start; background: var(--raised); color: var(--text); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+    .transcript::-webkit-scrollbar { width: 6px; }
+    .transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 6px; }
+
+    @media (max-width: 880px) {
+      .app { grid-template-columns: 1fr; height: auto; max-width: 460px; }
+      .panel.transcript-panel { height: 360px; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ════ LEFT: call ════ -->
+  <section class="panel call-panel">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1>MEA Voice Agent</h1>
+        <p>Real estate assistant · Riya</p>
+      </div>
+    </div>
+
+    <!-- Language selector (locked once a call starts) -->
+    <div class="lang-block">
+      <div class="lang-label">
+        <span>Language</span>
+        <span class="lock" id="lockHint"></span>
+      </div>
+      <div class="lang-grid" id="langGrid">
+        <button class="lang-btn active" data-lang="hi">Hinglish<span class="sub">Roman Hindi</span></button>
+        <button class="lang-btn" data-lang="te">Telugu<span class="sub">తెలుగు</span></button>
+        <button class="lang-btn" data-lang="en">English<span class="sub">English</span></button>
+      </div>
+      <div class="lang-hint" id="langHint">Choose a language, then start the call.</div>
+    </div>
+
+    <div class="stage">
+      <div class="avatar-ring idle" id="avatarRing"><div class="icon" id="avatarIcon">🎧</div></div>
+      <div class="status" id="status">Ready to call</div>
+      <div class="timer" id="timer">00:00</div>
+      <div class="controls">
+        <button class="call-btn idle" id="callBtn" aria-label="Start call">
+          <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          <div class="ring"></div>
+        </button>
+      </div>
+      <div class="error" id="error"></div>
+    </div>
+  </section>
+
+  <!-- ════ RIGHT: transcript ════ -->
+  <section class="panel transcript-panel">
+    <div class="ts-head">
+      <div class="t">Live Transcript <span id="tsLang">· Hinglish</span></div>
+      <div class="ts-meta">
+        <span class="live-dot" id="liveDot"><i></i> LIVE</span>
+        <span class="badge">Romanized</span>
+      </div>
+    </div>
+    <div class="transcript" id="transcript">
+      <div class="empty" id="empty">
+        <div class="big">💬</div>
+        <p>Your conversation with Riya will appear here in English letters — Hinglish or romanized Telugu — and scroll as you talk.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+const API = 'http://localhost:8000';
+const LANG_NAMES = { hi: 'Hinglish', te: 'Telugu', en: 'English' };
+
+let room = null;
+let callActive = false;
+let selectedLang = 'hi';
+let timerInterval = null;
+let seconds = 0;
+
+const callBtn   = document.getElementById('callBtn');
+const statusEl  = document.getElementById('status');
+const timerEl   = document.getElementById('timer');
+const avatarRing= document.getElementById('avatarRing');
+const avatarIcon= document.getElementById('avatarIcon');
+const transcript= document.getElementById('transcript');
+const emptyEl   = document.getElementById('empty');
+const errorEl   = document.getElementById('error');
+const langGrid  = document.getElementById('langGrid');
+const langHint  = document.getElementById('langHint');
+const lockHint  = document.getElementById('lockHint');
+const tsLang    = document.getElementById('tsLang');
+const liveDot   = document.getElementById('liveDot');
+const textDecoder = new TextDecoder();
+
+// ── Language selection (only allowed before the call) ──
+langGrid.addEventListener('click', (e) => {
+  const btn = e.target.closest('.lang-btn');
+  if (!btn || callActive) return;
+  selectedLang = btn.dataset.lang;
+  document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b === btn));
+  tsLang.textContent = '· ' + LANG_NAMES[selectedLang];
+  langHint.textContent = LANG_NAMES[selectedLang] + ' selected. Start the call to lock it in.';
+});
+
+function lockLanguage(locked) {
+  document.querySelectorAll('.lang-btn').forEach(b => b.disabled = locked);
+  lockHint.textContent = locked ? '🔒 locked for this call' : '';
+  langHint.textContent = locked
+    ? 'Language is fixed for the duration of the call.'
+    : LANG_NAMES[selectedLang] + ' selected. Start the call to lock it in.';
+}
+
+function showError(msg) {
+  errorEl.textContent = msg;
+  errorEl.classList.add('show');
+  setTimeout(() => errorEl.classList.remove('show'), 6000);
+}
+
+function setStatus(mode, label, icon) {
+  avatarRing.className = 'avatar-ring ' + mode;
+  statusEl.className = 'status' + (mode !== 'idle' ? ' ' + mode : '');
+  statusEl.textContent = label;
+  if (icon) avatarIcon.textContent = icon;
+}
+
+function addLine(role, text) {
+  if (!text) return;
+  if (emptyEl) emptyEl.style.display = 'none';
+  const isUser = role === 'user';
+  const div = document.createElement('div');
+  div.className = 'msg ' + (isUser ? 'user' : 'agent');
+  const who = document.createElement('span');
+  who.className = 'who';
+  who.textContent = isUser ? 'You' : 'Riya';
+  const body = document.createElement('span');
+  body.textContent = text;
+  div.append(who, body);
+  transcript.appendChild(div);
+  // Auto-scroll so newest line is always visible (slides as the talk goes on).
+  transcript.scrollTop = transcript.scrollHeight;
+}
+
+function startTimer() {
+  seconds = 0;
+  timerEl.classList.add('show');
+  timerInterval = setInterval(() => {
+    seconds++;
+    const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+    const s = String(seconds % 60).padStart(2, '0');
+    timerEl.textContent = m + ':' + s;
+  }, 1000);
+}
+function stopTimer() {
+  clearInterval(timerInterval); timerInterval = null;
+  timerEl.classList.remove('show');
+}
+
+callBtn.onclick = () => { callActive ? hangUp() : startCall(); };
+
+async function startCall() {
+  setStatus('connecting', 'Connecting…', '🔄');
+  callBtn.disabled = true;
+  lockLanguage(true);
+  // Fresh transcript for this call.
+  transcript.querySelectorAll('.msg').forEach(m => m.remove());
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  try {
+    const tokenRes = await fetch(API + '/api/livekit/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: selectedLang }),   // language locked at call start
+    });
+    if (!tokenRes.ok) throw new Error('Token request failed');
+    const { token, url } = await tokenRes.json();
+
+    room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+
+    room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === 'audio') {
+        track.attach();
+        track.on(LivekitClient.TrackEvent.AudioOutputStarted, () => setStatus('speaking', 'Riya is speaking…', '🔊'));
+        track.on(LivekitClient.TrackEvent.AudioOutputStopped, () => setStatus('listening', 'Listening… aap boliye', '🎤'));
+        setStatus('connected', 'Connected', '🎧');
+      }
+    });
+
+    room.on(LivekitClient.RoomEvent.ParticipantConnected, (p) => {
+      if (!p.isLocal) setStatus('connected', 'Agent connected', '🎧');
+    });
+
+    room.on(LivekitClient.RoomEvent.DataReceived, (payload, participant, kind, topic) => {
+      try {
+        const msg = JSON.parse(textDecoder.decode(payload));
+        if (msg.type === 'transcript') addLine(msg.role, msg.text);
+      } catch (e) { /* non-JSON data ignored */ }
+    });
+
+    room.on(LivekitClient.RoomEvent.ConnectionStateChanged, (state) => {
+      if (state === LivekitClient.ConnectionState.Connected) setStatus('connected', 'Connected', '🎧');
+      else if (state === LivekitClient.ConnectionState.Reconnecting) setStatus('connecting', 'Reconnecting…', '🔄');
+      else if (state === LivekitClient.ConnectionState.Disconnected && callActive) endCallUI('Call disconnected');
+    });
+
+    await room.connect(url, token);
+    await room.localParticipant.enableCameraAndMicrophone({ camera: false, microphone: true });
+
+    callActive = true;
+    callBtn.className = 'call-btn active';
+    callBtn.disabled = false;
+    callBtn.innerHTML = `
+      <svg viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
+      <div class="ring"></div>`;
+    setStatus('connected', 'Connected', '🎧');
+    liveDot.classList.add('show');
+    startTimer();
+
+  } catch (e) {
+    console.error('Call error:', e);
+    setStatus('idle', 'Call failed', '❌');
+    showError('Could not connect: ' + e.message);
+    callBtn.disabled = false;
+    lockLanguage(false);
+    if (room) { try { room.disconnect(); } catch (_) {} room = null; }
+  }
+}
+
+function endCallUI(label) {
+  callActive = false;
+  callBtn.className = 'call-btn idle';
+  callBtn.innerHTML = `
+    <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+    <div class="ring"></div>`;
+  setStatus('idle', label || 'Call ended', '🎧');
+  liveDot.classList.remove('show');
+  stopTimer();
+  lockLanguage(false);
+}
+
+async function hangUp() {
+  endCallUI('Call ended');
+  if (room) { try { room.disconnect(); } catch (_) {} room = null; }
+}
+</script>
+</body>
+</html>

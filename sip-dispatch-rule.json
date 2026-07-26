@@ -1,0 +1,10 @@
+{
+  "name": "voice-agent-dispatch",
+  "trunk_ids": ["ST_REPLACE_WITH_TRUNK_ID"],
+  "rule": {
+    "dispatchRuleIndividual": {
+      "roomPrefix": "call"
+    }
+  },
+  "metadata": "{\"tenant\":\"mumbai-realty\"}"
+}

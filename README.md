@@ -1,10 +1,30 @@
-# Real Estate Voice Agent — Multi-Tenant SaaS (Hinglish)
+# Multi-lingual Voice Agent
 
-Real-time AI voice agent for **real estate lead capture** over phone calls (WebRTC). Speaks professional **Hinglish**, understands Hindi/English mixed speech, and automatically extracts leads.
+**A real-time AI agent that answers the phone, holds a conversation in Telugu or mixed Hindi/English, and hands you a structured lead when the call ends.**
 
-Built as a **sellable, multi-tenant product**: you (admin) onboard real-estate agencies as *clients*, each with its own prompt, language, agent name, and login. Each agency sees only its own calls, minutes, summaries, recordings, and leads.
+Multi-tenant from the ground up: each client organisation gets its own prompt, language, agent persona, minute quota, and login, and can never see another's calls or recordings. Retargeting it to a new domain — support, surveys, sales, lead capture — means swapping the prompt and the extraction schema, not writing code.
 
-Built for Indian real estate agents who want a 24/7 virtual assistant that answers calls, qualifies leads, and delivers structured data to Google Sheets and WhatsApp.
+The shipped configuration is **real-estate lead capture in Hinglish**, which is what the seed tenants and default prompts implement.
+
+`Python` · `LiveKit / WebRTC` · `Groq Whisper + Llama 3.3` · `Sarvam Bulbul v3` · `Docker`
+
+<!-- TODO: this project is audio — a 30-second call recording or screen capture would
+     demonstrate it far better than any README text. Consider embedding a demo clip. -->
+
+---
+
+## The hard part: a conversation that doesn't feel like a phone tree
+
+Latency is the whole product. If the agent pauses for two seconds before replying, the caller talks over it and the illusion collapses. Four things buy that back:
+
+- **Sentence-level TTS streaming** — `StreamAdapter` with text pacing, so speech starts before the full reply is generated
+- **Barge-in** — Silero VAD with a 0.4 s endpointing delay stops the agent mid-sentence the moment the caller speaks
+- **A Hindi language hint on ASR** — Whisper transcribes code-switched Hindi/English far better when told to expect it than when left to autodetect
+- **A TTS fallback** — Sarvam Bulbul v3 primary, Edge TTS behind it, so a vendor outage degrades voice quality instead of ending the call
+
+**Lead extraction runs mid-call, not after.** The LLM pulls name, phone, property type, budget, location, and timeline as the conversation goes; once name plus contact exist, the lead auto-submits to Google Sheets and fires a WhatsApp alert — the caller doesn't have to reach the end for the lead to survive.
+
+**Call recording without extra infrastructure.** Caller and agent audio arrive as separate tracks; [`recorder.py`](recorder.py) mixes them into a single WAV per call locally — no cloud recording service, no per-minute storage bill. Recordings are served access-checked, scoped to the owning tenant.
 
 > **Cost & vendor guide:** see [`COSTS.md`](./COSTS.md) for the best/cheapest option per
 > sector (STT, LLM, TTS, telephony, hosting, storage) and what's free now vs paid later.
@@ -16,13 +36,14 @@ Built for Indian real estate agents who want a 24/7 virtual assistant that answe
 | Portal | URL | Who | What |
 |--------|-----|-----|------|
 | **Login** | `/login` | everyone | Single sign-in; routes by role |
-| **Admin** | `/admin` | you | Create/configure clients (prompt, greeting, language, agent name, password, minute quota, WhatsApp); see per-client calls / active / minutes / leads; drill into any client's calls |
-| **Client** | `/client` | each agency | Their calls + active calls + minutes; per-call **summary, lead, transcript, and audio playback**; CSV lead export |
-| **Test caller** | `/` | you | Browser WebRTC call UI to test the agent |
+| **Admin** | `/admin` | operator | Create/configure clients (prompt, greeting, language, agent name, password, minute quota, WhatsApp); see per-client calls / active / minutes / leads; drill into any client's calls |
+| **Client** | `/client` | each org | Their calls + active calls + minutes; per-call **summary, lead, transcript, and audio playback**; CSV lead export |
+| **Test caller** | `/` | operator | Browser WebRTC call UI to test the agent |
 | **Global dashboard** | `/dashboard` | internal | All calls across clients (legacy view) |
 
-**Default credentials** (change in `.env`): admin `admin` / `admin123`.
-Seed clients in `tenants.json`: `mumbai-realty` / `mumbai123`, `bangalore-properties` / `bangalore123`.
+> **Set your own credentials before running.** `ADMIN_USER` / `ADMIN_PASSWORD` / `SESSION_SECRET`
+> come from `.env`, and every tenant in `tenants.json` needs its `password` replaced. The
+> values committed to this repo are placeholders for local development only — never deploy them.
 
 ### Auth
 Signed-cookie sessions (PyJWT, no new deps). Admin credentials come from `.env`
@@ -94,12 +115,14 @@ Caller (Browser or Phone)
 - **Google Sheets delivery** — New leads appended automatically (optional)
 - **WhatsApp alerts** — Lead details sent to owner via Twilio WhatsApp (optional)
 - **Live dashboard** — View call history, transcripts, leads at `/dashboard`
-- **Production-ready** — Clean .env, dead code removed, proper error handling
+- **Multi-tenant admin panel** — Per-client prompts, language, persona, quota, WhatsApp config (`admin.html`, `tenants.py`)
+- **Call recording** — Caller + agent mixed to one WAV per call, access-checked per tenant (`recorder.py`)
+- **AI call summaries** — Groq-generated summary attached to every completed call
 
 ### Planned
 - **Phone calls via SIP** — Mumbai DID number (Edesy) → LiveKit SIP bridge → agent
-- **Multi-client admin panel** — Per-client prompts, sheet config, WhatsApp numbers
-- **Call recording** — Store audio for quality review
+  (trunk config is scaffolded in `sip-inbound-trunk.json` / `sip-dispatch-rule.json`; not yet live)
+- **Hosted deployment** — currently runs locally via Docker Compose
 
 ---
 

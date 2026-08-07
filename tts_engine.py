@@ -60,24 +60,30 @@ class VoiceProfile:
 
 
 # Tier 1 Sarvam female voices — verified across multiple Indic languages.
+# The speaker is overridable per language via TTS_VOICE_HI / _TE / _EN (as
+# documented in .env.example). Which speaker actually sounds native in a given
+# language is a listening call, not a spec — audition all 37 in
+# static/sarvam_demo.html, which already has each one rendered in hi and te.
 DEFAULT_VOICES: dict[str, VoiceProfile] = {
     "hi": VoiceProfile(
         language="hi",
-        sarvam_speaker="roopa",
+        sarvam_speaker=os.environ.get("TTS_VOICE_HI", "roopa"),
         sarvam_lang="hi-IN",
         edge_voice="hi-IN-SwaraNeural",
         quality_tier=1,
     ),
     "te": VoiceProfile(
         language="te",
-        sarvam_speaker="roopa",
+        # `roopa` is a Hindi-first speaker reused as-is for Telugu.
+        sarvam_speaker=os.environ.get("TTS_VOICE_TE", "roopa"),
         sarvam_lang="te-IN",
         edge_voice="te-IN-ShrutiNeural",
         quality_tier=1,
     ),
     "en": VoiceProfile(
         language="en",
-        sarvam_speaker="ishita",       # Tier 1, 0.13% CER for en-IN
+        # ishita: Tier 1, 0.13% CER for en-IN.
+        sarvam_speaker=os.environ.get("TTS_VOICE_EN", "ishita"),
         sarvam_lang="en-IN",
         edge_voice="en-US-GuyNeural",
         quality_tier=1,

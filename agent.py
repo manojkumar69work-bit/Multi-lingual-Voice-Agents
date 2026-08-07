@@ -117,6 +117,11 @@ LOCAL_TTS_TIMEOUT = float(os.environ.get("LOCAL_TTS_TIMEOUT", "30"))
 # 1.5+ starts sounding rushed but still intelligible.
 TTS_PACE = float(os.environ.get("TTS_PACE", "1.4"))
 
+# Telugu words carry more syllables per word than Hindi, so the same pace value
+# lands much faster in the ear and the voice starts slurring conjuncts
+# (అపాయింట్‌మెంట్, కావాలంటే). Tune by ear with TTS_PACE_TE in .env.
+TTS_PACE_BY_LANG = {"te": float(os.environ.get("TTS_PACE_TE", "1.15"))}
+
 LEAD_EXTRACT_MODEL = CHAT_MODEL
 
 # Google Sheets (optional)
@@ -531,6 +536,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
         )
 
         lang = self._tts._language
+        pace = TTS_PACE_BY_LANG.get(lang, TTS_PACE)
 
         def _emit(pcm: bytes) -> None:
             output_emitter.push(pcm)
@@ -548,7 +554,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                 async with client.stream(
                     "POST",
                     f"{LOCAL_TTS_URL}/stream",
-                    json={"text": text, "language": lang, "pace": TTS_PACE},
+                    json={"text": text, "language": lang, "pace": pace},
                 ) as resp:
                     if resp.status_code == 200:
                         buffer = bytearray()
@@ -581,7 +587,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                 output_emitter.flush()
                 output_emitter.end_input()
                 logger.info(
-                    f"TTS (local /stream, lang={lang}, pace={TTS_PACE}): "
+                    f"TTS (local /stream, lang={lang}, pace={pace}): "
                     f"{len(text)} chars -> {pushed} PCM bytes"
                 )
                 return
@@ -591,7 +597,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
         # Fallback: direct Edge TTS (slower, but always available).
         try:
             import edge_tts
-            rate = f"+{int((TTS_PACE - 1) * 100)}%" if TTS_PACE and TTS_PACE != 1.0 else None
+            rate = f"+{int((pace - 1) * 100)}%" if pace and pace != 1.0 else None
             edge_voice = _EDGE_VOICE_BY_LANG.get(lang, _EDGE_VOICE_BY_LANG["hi"])
             communicate = edge_tts.Communicate(text, voice=edge_voice, rate=rate)
             mp3_data = bytearray()

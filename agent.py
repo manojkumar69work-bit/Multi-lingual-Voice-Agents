@@ -245,7 +245,10 @@ def build_system_prompt(tenant) -> str:
             f"'అండి' onto a word that already ends in '~అండి' — say 'చెప్పండి', never 'చెప్పండి అండి'. "
             f"One politeness marker per sentence is enough.\n"
             f"8. Keep your tone warm, friendly, relaxed and patient — like chatting with a neighbour "
-            f"you want to help, not like reading a script.\n\n"
+            f"you want to help, not like reading a script.\n"
+            f"9. Write numbers, times and prices as DIGITS (10:30, 2 BHK, 50 లక్షలు) — never spell "
+            f"them out in Telugu words (not పది ముప్పై, not రెండు). The voice reads digits correctly "
+            f"and spelled-out numerals sound like a news bulletin.\n\n"
             f"{_STYLE_HINT}\n\n"
             f"Over the conversation, {lead_hint}\n\n"
             f"{closing_hint}"
@@ -295,8 +298,10 @@ def build_greeting(tenant) -> str:
     agent_name = tenant.agent_name or "Riya"
     biz_type = (tenant.business_type or "service").strip()
     if lang == "te":
+        # నమస్కారం, not నమస్తే — నమస్తే is the Hindi form; Telugu speakers answering
+        # a phone say నమస్కారం.
         return (
-            f"నమస్తే! నేను {agent_name}ని, మీ {biz_type} అసిస్టెంట్‌ని. "
+            f"నమస్కారం! నేను {agent_name}ని, మీ {biz_type} అసిస్టెంట్‌ని. "
             f"చెప్పండి, మీ పేరు ఏంటి?"
         )
     if lang == "en":

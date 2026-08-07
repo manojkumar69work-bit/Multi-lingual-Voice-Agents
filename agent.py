@@ -318,17 +318,31 @@ _STT_HALLUCINATIONS = {
 }
 
 
-def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str) -> str:
+def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str,
+                      lang: str = "hi") -> str:
     """Vocabulary-biasing prompt for Whisper. Nudges the decoder toward the names,
     brand terms and domain words a caller is likely to use, so they get transcribed
     exactly instead of guessed phonetically. Whisper only reads ~224 tokens of
-    prompt, so keep it short."""
-    parts = [
-        f"Customer call for {tenant_name}." if tenant_name else "Customer support call.",
-        f"The assistant's name is {agent_name}." if agent_name else "",
-        "Common topics: AI automation, workflows, voice agents, integrations, "
-        "demo, pricing, follow-up, callback, appointment, WhatsApp, email.",
-    ]
+    prompt, so keep it short.
+
+    The prompt must be written in the SAME script the audio will be transcribed in.
+    Whisper copies the prompt's script and register into its output, so an English
+    prompt on a Telugu call pushes the decoder toward English/romanized guesses —
+    which is exactly the mishearing we're trying to prevent."""
+    if lang == "te":
+        parts = [
+            f"{tenant_name} కస్టమర్ కాల్." if tenant_name else "కస్టమర్ సపోర్ట్ కాల్.",
+            f"అసిస్టెంట్ పేరు {agent_name}." if agent_name else "",
+            "సాధారణ మాటలు: అపాయింట్‌మెంట్, టైమ్, ధర, రేటు, బడ్జెట్, లొకేషన్, "
+            "సైట్ విజిట్, డెమో, కాల్‌బ్యాక్, వాట్సాప్, ఈమెయిల్, కన్ఫర్మ్, ఫ్రీ, హెల్ప్.",
+        ]
+    else:
+        parts = [
+            f"Customer call for {tenant_name}." if tenant_name else "Customer support call.",
+            f"The assistant's name is {agent_name}." if agent_name else "",
+            "Common topics: AI automation, workflows, voice agents, integrations, "
+            "demo, pricing, follow-up, callback, appointment, WhatsApp, email.",
+        ]
     if business_info:
         # First ~160 chars of the knowledge base usually holds product/brand names.
         snippet = " ".join(business_info.split())[:160]
@@ -337,9 +351,18 @@ def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str) -> 
 
 
 def _significant_words(text: str) -> list:
-    """Lowercased alphanumeric word tokens of length >= 3 — used to compare a
-    transcript against the bias prompt."""
-    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) >= 3]
+    """Lowercased word tokens of length >= 3 — used to compare a transcript
+    against the bias prompt.
+
+    The class is `\\w` plus the Indic blocks and the zero-width joiners: an
+    ASCII-only regex sees no words at all in Telugu script (silently disabling
+    echo detection on every Telugu call), and bare `\\w` is no better — Python's
+    `\\w` excludes combining marks, so it shreds అపాయింట్‌మెంట్ into 1-letter
+    fragments that all fall under the length floor."""
+    return [
+        w for w in re.findall(r"[\wऀ-ൿ‌‍]+", (text or "").lower())
+        if len(w) >= 3
+    ]
 
 
 def _is_bias_echo(text: str, bias_prompt: str) -> bool:
@@ -867,7 +890,7 @@ async def entrypoint(ctx: JobContext):
 
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
-        stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name)),
+        stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name, tenant.language)),
         tts=StreamAdapter(
             tts=VoiceTTS(language=tenant.language, recorder=recorder), text_pacing=True
         ),
@@ -1009,7 +1032,7 @@ async def session_decline(ctx: JobContext, tenant) -> None:
 
         session = AgentSession(
             vad=ctx.proc.userdata["vad"],
-            stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name)),
+            stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name, tenant.language)),
             tts=StreamAdapter(tts=VoiceTTS(language=tenant.language), text_pacing=True),
         )
         await session.start(agent=Agent(instructions="Say only the given line."), room=ctx.room)

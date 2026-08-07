@@ -15,3 +15,5 @@ contacts.json
 *.wav
 *.pid
 /tmp/
+logs/
+*.log

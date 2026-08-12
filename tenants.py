@@ -21,6 +21,8 @@ import threading
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
+import passwords
+
 logger = logging.getLogger("tenants")
 
 # Serializes writes so concurrent admin edits don't corrupt tenants.json.
@@ -45,6 +47,9 @@ class TenantConfig:
     phone_number: str = ""              # Optional E.164 DID for SIP routing (later)
     password: str = ""                  # Client-portal login password
     whatsapp_to: str = ""               # Optional per-client lead-alert WhatsApp number
+    sheet_id: str = ""                  # Per-client Google Sheet; blank → GOOGLE_SHEET_ID
+    webhook_url: str = ""               # Optional per-client lead webhook (CRM/Zapier/n8n)
+    webhook_secret: str = ""            # If set, leads are HMAC-signed (X-MEA-Signature)
     minute_quota: int = 0               # Monthly minute cap; 0 = unlimited
     enforce_quota: bool = False         # If true, agent refuses calls past the cap
     active: bool = True                 # Soft on/off switch for the client
@@ -53,10 +58,21 @@ class TenantConfig:
     lead_fields: str = ""               # comma-separated field list, e.g. "name,property_type,budget,location,timeline,notes"
     closing_instructions: str = ""      # optional custom closing behavior; blank uses generic fallback
 
+    # Fields never sent to a browser. `password` is a PBKDF2 hash and
+    # `webhook_secret` signs outbound lead payloads — neither is re-displayable,
+    # and echoing them into an admin form field only risks leaking them.
+    SECRET_FIELDS = ("password", "webhook_secret")
+
     def public_dict(self) -> dict:
-        """Dict safe to expose to the admin UI (includes config, excludes nothing
-        sensitive beyond the password which the admin legitimately sets)."""
+        """Full config including secrets — for persistence and internal merges."""
         return asdict(self)
+
+    def safe_dict(self) -> dict:
+        """Config for API responses: secrets replaced by a set/unset flag."""
+        d = asdict(self)
+        for f in self.SECRET_FIELDS:
+            d[f"{f}_set"] = bool(d.pop(f, ""))
+        return d
 
 
 # ── Defaults ───────────────────────────────────────────────────────────────
@@ -106,6 +122,9 @@ def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
         phone_number=_normalize_number(d.get("phone_number", "")),
         password=d.get("password", ""),
         whatsapp_to=d.get("whatsapp_to", ""),
+        sheet_id=d.get("sheet_id", ""),
+        webhook_url=d.get("webhook_url", ""),
+        webhook_secret=d.get("webhook_secret", ""),
         minute_quota=int(d.get("minute_quota", 0) or 0),
         enforce_quota=bool(d.get("enforce_quota", False)),
         active=bool(d.get("active", True)),
@@ -225,6 +244,9 @@ def upsert_tenant(data: dict) -> TenantConfig:
         cfg = _tenant_from_dict(data, fallback_id=incoming_id)
 
     cfg.id = incoming_id
+    # Never persist a password in the clear — hashing here covers both the admin
+    # portal and any hand-edited tenants.json that gets re-saved.
+    cfg.password = passwords.ensure_hashed(cfg.password)
     _TENANTS[incoming_id] = cfg
     save_tenants()
     return cfg
@@ -244,9 +266,9 @@ def delete_tenant(tenant_id: str) -> bool:
 # ── Lookups ──────────────────────────────────────────────────────────────────
 
 def list_tenants(include_default: bool = False) -> list[dict]:
-    """Return tenants as a list of dicts (for the admin API)."""
+    """Return tenants as a list of dicts (for the admin API — secrets stripped)."""
     return [
-        t.public_dict()
+        t.safe_dict()
         for tid, t in _TENANTS.items()
         if include_default or tid != "default"
     ]

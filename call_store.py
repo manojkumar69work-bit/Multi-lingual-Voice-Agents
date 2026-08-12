@@ -26,6 +26,12 @@ def _get_conn() -> sqlite3.Connection:
         _LOCAL.conn.execute("PRAGMA busy_timeout=5000")
     return _LOCAL.conn
 
+
+def get_conn() -> sqlite3.Connection:
+    """Public accessor so sibling modules (lead_delivery) share one DB file,
+    one WAL journal, and the same busy-timeout without opening their own."""
+    return _get_conn()
+
 def init_db():
     conn = _get_conn()
     conn.executescript("""

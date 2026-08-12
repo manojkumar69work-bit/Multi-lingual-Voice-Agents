@@ -26,6 +26,7 @@ import wave
 import httpx
 from livekit import rtc
 import call_store
+import lead_delivery
 import tenants
 from recorder import CallRecorder
 from livekit.agents import (
@@ -777,67 +778,21 @@ async def generate_summary(transcript: list[dict], business_type: str = "") -> s
         return ""
 
 
-async def submit_lead(lead: dict, tenant):
-    """Send lead to Google Sheets + WhatsApp.
+async def submit_lead(lead: dict, tenant, session_id: str = ""):
+    """Hand the lead to the durable delivery queue (lead_delivery.py).
 
-    `tenant` provides per-client lead_fields, WhatsApp number, and business name.
+    This used to push to Sheets and WhatsApp inline and swallow every failure —
+    a provider blip lost the lead permanently. Now we only write queue rows,
+    which is fast, local, and survives this process dying. server.py's worker
+    does the actual delivery with retries and records what happened.
     """
     if not lead or not any(lead.values()):
         return
 
     lead_fields = _parse_lead_fields(getattr(tenant, "lead_fields", ""))
-    tasks = []
-    to_number = getattr(tenant, "whatsapp_to", "") or WHATSAPP_TO
-
-    if SHEETS_ID and SHEETS_CREDENTIALS:
-        tasks.append(_append_to_sheets(lead, lead_fields))
-    if TWILIO_SID and TWILIO_TOKEN and to_number:
-        tasks.append(_send_whatsapp(lead, to_number, getattr(tenant, "name", "Your Business")))
-
-    if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-
-async def _append_to_sheets(lead: dict, lead_fields: list[str]):
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        creds = Credentials.from_service_account_file(
-            SHEETS_CREDENTIALS,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"],
-        )
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SHEETS_ID)
-        ws = sh.sheet1
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat(timespec="minutes")
-        row = [lead.get(k, "") for k in lead_fields] + [now]
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        logger.info(f"Lead appended to Google Sheet {SHEETS_ID}")
-    except Exception as e:
-        logger.error(f"Google Sheets error: {e}")
-
-
-async def _send_whatsapp(lead: dict, to_number: str, client_name: str):
-    try:
-        from twilio.rest import Client
-        from datetime import datetime
-        to_number = to_number or WHATSAPP_TO
-        client = Client(TWILIO_SID, TWILIO_TOKEN)
-        msg_lines = [f"🔔 *New Lead — {client_name}*"]
-        for key, value in lead.items():
-            if value:
-                label = key.replace("_", " ").title()
-                msg_lines.append(f"*{label}:* {value}")
-        msg_lines.append(f"\n{datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        message = "\n".join(msg_lines)
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: client.messages.create(body=message, from_=WHATSAPP_FROM, to=to_number),
-        )
-        logger.info(f"WhatsApp lead alert sent to {to_number}")
-    except Exception as e:
-        logger.error(f"WhatsApp error: {e}")
+    await asyncio.to_thread(
+        lead_delivery.enqueue_lead, lead, tenant, session_id, lead_fields
+    )
 
 
 # ─── LiveKit Agent ──────────────────────────────────────────────────────────
@@ -983,7 +938,7 @@ async def entrypoint(ctx: JobContext):
             has_name = bool(lead_data.get("name"))
             if has_name:
                 call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
-                await submit_lead(lead_data, tenant)
+                await submit_lead(lead_data, tenant, session_id)
                 lead_submitted = True
                 call_store.upsert_call(session_id, lead_submitted=True)
                 logger.info(f"Lead auto-submitted for {ctx.room.name}")
@@ -1013,7 +968,7 @@ async def entrypoint(ctx: JobContext):
             lead_data = await extract_lead(transcript, tenant)
             if lead_data:
                 call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
-                await submit_lead(lead_data, tenant)
+                await submit_lead(lead_data, tenant, session_id)
                 lead_submitted = True
                 call_store.upsert_call(session_id, lead_submitted=True)
 

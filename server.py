@@ -15,10 +15,12 @@ This server provides:
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import json
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -28,6 +30,7 @@ from pydantic import BaseModel
 
 import auth
 import call_store
+import lead_delivery
 import tenants
 
 logger = logging.getLogger("voice-server")
@@ -53,10 +56,44 @@ CONTACTS_FILE = os.environ.get(
     "CONTACTS_FILE", os.path.join(os.path.dirname(__file__), "contacts.json")
 )
 
+# Browser origins allowed to call the API. The portals are same-origin, so the
+# default is "no cross-origin access at all"; set CORS_ORIGINS (comma-separated)
+# only when a portal is genuinely served from another host.
+CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+
 # ─── App ────────────────────────────────────────────────────────────────────
 
-app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=False)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run the lead delivery worker alongside the API.
+
+    The worker lives here rather than in agent.py because this process is
+    long-lived: a lead queued by a call that has already ended still gets
+    delivered, and retries survive agent restarts.
+    """
+    auth.check_config()  # raises in production if secrets are still dev defaults
+    stop = asyncio.Event()
+    worker = asyncio.create_task(lead_delivery.run_worker(stop))
+    try:
+        yield
+    finally:
+        stop.set()
+        worker.cancel()
+        try:
+            await worker
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=bool(CORS_ORIGINS),
+)
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -92,6 +129,9 @@ class ClientUpsert(BaseModel):
     phone_number: str | None = None
     password: str | None = None
     whatsapp_to: str | None = None
+    sheet_id: str | None = None
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
     minute_quota: int | None = None
     enforce_quota: bool | None = None
     active: bool | None = None
@@ -312,7 +352,7 @@ def admin_create_client(body: ClientUpsert, _admin=Depends(auth.require_admin)):
         cfg = tenants.upsert_tenant(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"client": cfg.public_dict()}
+    return {"client": cfg.safe_dict()}
 
 
 @app.put("/api/admin/clients/{client_id}")
@@ -320,12 +360,17 @@ def admin_update_client(client_id: str, body: ClientUpsert, _admin=Depends(auth.
     if not tenants.get_tenant(client_id):
         raise HTTPException(status_code=404, detail="Client not found")
     data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # The admin form never receives existing secrets back, so it submits them
+    # blank when unchanged. Drop blanks rather than wiping the stored value.
+    for f in tenants.TenantConfig.SECRET_FIELDS:
+        if data.get(f) == "":
+            data.pop(f)
     data["id"] = client_id
     try:
         cfg = tenants.upsert_tenant(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"client": cfg.public_dict()}
+    return {"client": cfg.safe_dict()}
 
 
 @app.delete("/api/admin/clients/{client_id}")
@@ -391,10 +436,39 @@ def get_recording(session_id: str, user=Depends(auth.current_user)):
     return FileResponse(path, media_type="audio/wav", filename=safe)
 
 
-# ─── Internal dashboard (kept; global view) ───────────────────────────────────
+# ─── Lead delivery queue (admin) ──────────────────────────────────────────────
+
+@app.get("/api/admin/deliveries")
+def admin_deliveries(client_id: str | None = None, status: str | None = None,
+                     limit: int = 100, _admin=Depends(auth.require_admin)):
+    return {
+        "deliveries": lead_delivery.list_deliveries(client_id=client_id, status=status, limit=limit),
+        "stats": lead_delivery.queue_stats(),
+    }
+
+
+@app.post("/api/admin/deliveries/{delivery_id}/retry")
+def admin_retry_delivery(delivery_id: int, _admin=Depends(auth.require_admin)):
+    if not lead_delivery.retry_now(delivery_id):
+        raise HTTPException(status_code=404, detail="Delivery not found or already delivered")
+    return {"ok": True}
+
+
+@app.get("/api/client/deliveries")
+def client_deliveries(client_id: str = Depends(auth.require_client)):
+    """A client can see whether its own leads actually reached Sheets/WhatsApp/CRM."""
+    return {
+        "deliveries": lead_delivery.list_deliveries(client_id=client_id, limit=100),
+        "stats": lead_delivery.queue_stats(client_id=client_id),
+    }
+
+
+# ─── Internal dashboard (kept; global view — admin only) ──────────────────────
 
 @app.get("/api/dashboard/calls")
-def dashboard_calls():
+def dashboard_calls(_admin=Depends(auth.require_admin)):
+    """Global cross-tenant view. Was unauthenticated, which exposed every
+    client's transcripts and lead data to anyone who knew the URL."""
     active = call_store.get_active_calls()
     recent = call_store.list_calls(status="completed", limit=20)
     completed_list = call_store.list_calls(status="completed", limit=9999)

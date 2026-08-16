@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 httpx
+websockets          # Sarvam streaming TTS WebSocket (tts_server.py /stream)
 edge-tts
 python-dotenv
 python-multipart

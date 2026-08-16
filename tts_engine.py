@@ -59,23 +59,26 @@ class VoiceProfile:
     quality_tier: int      # 1 = best, lower is better. 99 = unknown.
 
 
-# Tier 1 Sarvam female voices — verified across multiple Indic languages.
-# The speaker is overridable per language via TTS_VOICE_HI / _TE / _EN (as
-# documented in .env.example). Which speaker actually sounds native in a given
-# language is a listening call, not a spec — audition all 37 in
-# static/sarvam_demo.html, which already has each one rendered in hi and te.
+# Sarvam's own per-language speaker recommendations, which are chosen on
+# character error rate in that language — not one favourite voice reused
+# everywhere. This used to be `roopa` for BOTH hi and te; roopa is on neither
+# language's recommended list, and using a Hindi-first speaker for Telugu is
+# audible in the conjuncts.
+#   hi-IN → priya, suhani      te-IN → neha, priya      en-IN → ishita
+# Overridable per language via TTS_VOICE_HI / _TE / _EN (see .env.example).
+# Which speaker sounds best is finally a listening call, not a spec — audition
+# all 37 in static/sarvam_demo.html, which renders each one in hi and te.
 DEFAULT_VOICES: dict[str, VoiceProfile] = {
     "hi": VoiceProfile(
         language="hi",
-        sarvam_speaker=os.environ.get("TTS_VOICE_HI", "roopa"),
+        sarvam_speaker=os.environ.get("TTS_VOICE_HI", "priya"),
         sarvam_lang="hi-IN",
         edge_voice="hi-IN-SwaraNeural",
         quality_tier=1,
     ),
     "te": VoiceProfile(
         language="te",
-        # `roopa` is a Hindi-first speaker reused as-is for Telugu.
-        sarvam_speaker=os.environ.get("TTS_VOICE_TE", "roopa"),
+        sarvam_speaker=os.environ.get("TTS_VOICE_TE", "neha"),
         sarvam_lang="te-IN",
         edge_voice="te-IN-ShrutiNeural",
         quality_tier=1,
@@ -85,19 +88,42 @@ DEFAULT_VOICES: dict[str, VoiceProfile] = {
         # ishita: Tier 1, 0.13% CER for en-IN.
         sarvam_speaker=os.environ.get("TTS_VOICE_EN", "ishita"),
         sarvam_lang="en-IN",
-        edge_voice="en-US-GuyNeural",
+        edge_voice="en-IN-NeerjaNeural",
         quality_tier=1,
     ),
 }
+
+# Bulbul v3 sampling temperature (0.01–2.0, model default 0.6) — governs how
+# much prosodic variation the model allows itself.
+DEFAULT_TEMPERATURE = float(os.environ.get("TTS_TEMPERATURE", "0.6"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Text normalization — Indian-languages-aware (currency, %, numbers)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CURRENCY_PATTERN = re.compile(r"[₹$¥£€]([\d][\d,]*(?:\.\d+)?)")
+# Indian magnitude words that follow the amount. "₹50 लाख" has to become
+# "50 लाख रुपये" ("fifty lakh rupees"), not "50 रुपये लाख" — and property prices
+# are quoted this way in essentially every call this agent takes.
+_MAGNITUDES = (
+    "लाख|करोड़|करोड|हज़ार|हजार"          # hi
+    "|లక్ష|లక్షల|కోటి|కోట్ల|వేల|వేలు"     # te
+    "|lakh|lakhs|crore|crores|thousand"  # commonly written in Latin either way
+)
+_CURRENCY_PATTERN = re.compile(
+    r"[₹$¥£€]([\d][\d,]*(?:\.\d+)?)" rf"(\s*(?:{_MAGNITUDES}))?"
+)
 _PERCENT_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _NUMBER_PATTERN = re.compile(r"\b\d+(?:[\.,]\d+)?\b")
+
+# 6+ consecutive digits is an identifier a caller reads out or writes down —
+# phone number, PIN code, flat number — never a quantity. Spoken digit by digit.
+_LONG_DIGIT_RUN = re.compile(r"\d{6,}")
+
+# Off by default: Bulbul v3's own preprocessing reads plain digits better than
+# this module's num2words pass does. See normalize_text(). Turning it on also
+# needs `indic-numtowords`, which is not a project dependency.
+SPELL_OUT_NUMBERS = os.environ.get("TTS_SPELL_NUMBERS", "0") not in ("0", "false", "False")
 
 
 def _safe_num2words(s: str, lang: str) -> str:
@@ -110,50 +136,73 @@ def _safe_num2words(s: str, lang: str) -> str:
 
 
 def _currency_label(symbol: str, lang: str) -> str:
+    # Hindi labels are Roman, not Devanagari: the agent replies in Roman Hinglish,
+    # so a Devanagari "रुपये" would be the only native-script word in an otherwise
+    # Latin sentence. Telugu replies are in Telugu script, so its labels stay native.
     labels = {
-        "₹": {"hi": "रुपये", "te": "రూపాయలు"},
-        "$": {"hi": "डॉलर", "te": "డాలర్లు"},
-        "¥": {"hi": "येन", "te": "యెన్"},
-        "£": {"hi": "पाउंड", "te": "పౌండ్లు"},
-        "€": {"hi": "यूरो", "te": "యూరోలు"},
+        "₹": {"hi": "rupaye", "te": "రూపాయలు"},
+        "$": {"hi": "dollar", "te": "డాలర్లు"},
+        "¥": {"hi": "yen", "te": "యెన్"},
+        "£": {"hi": "pound", "te": "పౌండ్లు"},
+        "€": {"hi": "euro", "te": "యూరోలు"},
     }
     return labels.get(symbol, {}).get(lang, "")
 
 
 def _percent_label(lang: str) -> str:
-    return {"hi": "प्रतिशत", "te": "శాతం"}.get(lang, "%")
+    # "percent" and "point", not प्रतिशत / दशमलव — same Roman-Hinglish reasoning as
+    # _currency_label, and these are the words Hinglish speakers actually use.
+    return {"hi": "percent", "te": "శాతం"}.get(lang, "%")
 
 
 def _decimal_label(lang: str) -> str:
-    return {"hi": "दशमलव", "te": "దశమాంశం"}.get(lang, ".")
+    return {"hi": "point", "te": "దశమాంశం"}.get(lang, ".")
 
 
 def normalize_text(text: str, lang: str) -> str:
-    """Pre-process text for TTS: handle currency, percentages, raw numbers."""
+    """Pre-process text for TTS: expand currency/percent symbols, and spell out
+    long digit runs (phone numbers, PIN codes) digit by digit.
+
+    What this deliberately does NOT do any more is convert ordinary numbers to
+    words. Bulbul v3 always runs its own text preprocessing, and reads plain
+    digits correctly — including times and units the hand-rolled pass mangled.
+    ``\\b\\d+\\b`` matched each half of "10:30" separately and produced
+    "दस:तीस", colon and all; "2 BHK" became "दो BHK". The agent's own prompt
+    tells the LLM to write digits precisely because the voice reads them well,
+    so converting them here was fighting both the model and the prompt.
+
+    Set TTS_SPELL_NUMBERS=1 to restore the old spell-everything behaviour (only
+    useful with a provider whose own normalizer is worse than this one).
+    """
     if lang not in ("hi", "te"):
         return text
 
     def _cur(m: re.Match) -> str:
+        """₹50 → "50 रुपये", ₹50 लाख → "50 लाख रुपये"."""
         symbol = m.group(0)[0]
-        amt = m.group(1).replace(",", "")
-        try:
-            n = int(float(amt))
-            words = _safe_num2words(str(n), lang)
-            label = _currency_label(symbol, lang)
-            return f"{words} {label}".strip()
-        except Exception:
+        label = _currency_label(symbol, lang)
+        if not label:
             return m.group(0)
+        magnitude = (m.group(2) or "").strip()
+        return f"{m.group(1)} {magnitude} {label}".replace("  ", " ")
 
     text = _CURRENCY_PATTERN.sub(_cur, text)
+    text = _PERCENT_PATTERN.sub(lambda m: f"{m.group(1)} {_percent_label(lang)}", text)
 
-    def _pct(m: re.Match) -> str:
-        try:
-            n = int(float(m.group(1)))
-            return f"{_safe_num2words(str(n), lang)} {_percent_label(lang)}"
-        except Exception:
-            return m.group(0)
+    def _digits_one_by_one(m: re.Match) -> str:
+        """A 10-digit mobile is ten digits, not one astronomical quantity.
 
-    text = _PERCENT_PATTERN.sub(_pct, text)
+        Read as a number, "9876543210" comes out somewhere in the billions —
+        both wrong and useless to anyone trying to write it down. Spacing the
+        digits is enough for the TTS to read them individually, and needs no
+        number-to-words dependency to do it.
+        """
+        return " ".join(m.group(0))
+
+    text = _LONG_DIGIT_RUN.sub(_digits_one_by_one, text)
+
+    if not SPELL_OUT_NUMBERS:
+        return text
 
     def _num(m: re.Match) -> str:
         s = m.group(0).replace(",", "")
@@ -167,8 +216,7 @@ def normalize_text(text: str, lang: str) -> str:
                 return m.group(0)
         return _safe_num2words(s, lang)
 
-    text = _NUMBER_PATTERN.sub(_num, text)
-    return text
+    return _NUMBER_PATTERN.sub(_num, text)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,7 +297,14 @@ class TTSProvider:
     name: str = "base"
     available: bool = False
 
-    def synthesize(self, text: str, lang: str, voice: Optional[str] = None, pace: Optional[float] = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        lang: str,
+        voice: Optional[str] = None,
+        pace: Optional[float] = None,
+        temperature: Optional[float] = None,
+    ) -> bytes:
         """Return WAV bytes (16-bit PCM)."""
         raise NotImplementedError
 
@@ -275,7 +330,14 @@ class SarvamProvider(TTSProvider):
                 self.client = None
                 self.available = False
 
-    def synthesize(self, text: str, lang: str, voice: Optional[str] = None, pace: Optional[float] = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        lang: str,
+        voice: Optional[str] = None,
+        pace: Optional[float] = None,
+        temperature: Optional[float] = None,
+    ) -> bytes:
         if not self.available or self.client is None:
             raise RuntimeError("Sarvam provider not available (missing SARVAM_API_KEY)")
 
@@ -294,6 +356,10 @@ class SarvamProvider(TTSProvider):
             )
             if pace is not None:
                 kwargs["pace"] = pace
+            # v3-only. Sent unconditionally would break a v2 fallback, so it is
+            # tied to the model string above.
+            if temperature is not None:
+                kwargs["temperature"] = temperature
             resp = self.client.text_to_speech.convert(**kwargs)
             # Response shape varies by SDK version — try common access patterns
             audio_b64: Optional[str] = None
@@ -332,7 +398,14 @@ class EdgeProvider(TTSProvider):
             logger.warning("[edge] edge-tts package not installed")
             self.available = False
 
-    def synthesize(self, text: str, lang: str, voice: Optional[str] = None, pace: Optional[float] = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        lang: str,
+        voice: Optional[str] = None,
+        pace: Optional[float] = None,
+        temperature: Optional[float] = None,  # Sarvam-only; accepted and ignored.
+    ) -> bytes:
         if not self.available:
             raise RuntimeError("edge-tts package not installed")
 
@@ -423,7 +496,14 @@ class MMSProvider(TTSProvider):
         self.models[lang] = m
         logger.warning("[mms] %s loaded — REMINDER: %s", lang, self.LICENSE_NOTICE)
 
-    def synthesize(self, text: str, lang: str, voice: Optional[str] = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        lang: str,
+        voice: Optional[str] = None,
+        pace: Optional[float] = None,        # not supported by MMS
+        temperature: Optional[float] = None,  # not supported by MMS
+    ) -> bytes:
         if not self.available:
             raise RuntimeError("transformers/torch not installed")
         if lang not in ("hi", "te"):
@@ -495,12 +575,15 @@ class TTSSynthesizer:
         preferred: Optional[str] = None,
         voice: Optional[str] = None,
         pace: Optional[float] = None,
+        temperature: Optional[float] = None,
     ) -> tuple[bytes, str]:
         """Returns (wav_bytes, provider_used).
 
         Tries `preferred` first if given, then walks PROVIDER_PRIORITY.
         `voice` is a per-request voice override (Sarvam speaker name, Edge voice ID).
-        `pace` speeds up speech (>1.0 = faster, e.g. 1.15 = 15% faster).
+        `pace` scales speech rate (1.0 = the rate Bulbul v3 is trained at).
+        `temperature` is Sarvam v3's prosody-variation control; other providers
+        accept and ignore it.
         """
         # Try the requested/preferred provider first
         order = list(self.PROVIDER_PRIORITY)
@@ -514,7 +597,9 @@ class TTSSynthesizer:
                 continue
             provider = self.providers[name]
             try:
-                wav = provider.synthesize(text, lang, voice=voice, pace=pace)
+                wav = provider.synthesize(
+                    text, lang, voice=voice, pace=pace, temperature=temperature
+                )
                 if wav:
                     return wav, name
             except Exception as e:

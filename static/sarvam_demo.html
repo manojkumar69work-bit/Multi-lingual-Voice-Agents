@@ -17,44 +17,130 @@ h1 { color: #10b981; margin-bottom: 5px; }
 .card-header .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #334155; color: #94a3b8; }
 .card.current .badge { background: #10b981; color: #0f172a; font-weight: 600; }
 .card audio { width: 100%; height: 36px; border-radius: 6px; }
+.card .note { font-size: 12px; color: #94a3b8; margin: 6px 0 8px; line-height: 1.4; }
+.card.before { border-color: #b45309; }
+.card.after { border-color: #10b981; }
+.card .tag { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; }
+.card.before .tag { background: #b45309; color: #fff7ed; }
+.card.after .tag { background: #10b981; color: #0f172a; }
+.sample-text { font-size: 13px; color: #cbd5e1; background: #16202e; border-left: 3px solid #334155; padding: 8px 10px; border-radius: 4px; margin-bottom: 14px; }
+.group { margin-bottom: 26px; }
+.group h3 { font-size: 15px; color: #e2e8f0; margin-bottom: 10px; font-weight: 600; }
+nav { margin-bottom: 24px; display: flex; gap: 10px; }
+nav button { background: #1e293b; color: #e2e8f0; border: 1px solid #334155; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+nav button.on { background: #10b981; color: #0f172a; border-color: #10b981; font-weight: 600; }
+.empty { color: #94a3b8; font-size: 14px; }
 </style>
 </head>
 <body>
-<h1>Sarvam Bulbul v3 — Voice Showcase</h1>
-<p class="subtitle">37 speakers × Hindi & Telugu. Pick your favorites.</p>
+<h1>Sarvam Bulbul v3 — Voice Comparison</h1>
+<p class="subtitle">Before/after for each voice change, plus the full speaker sweep. Judge by ear.</p>
+<nav>
+  <button id="tab-ab" class="on">A/B changes</button>
+  <button id="tab-speakers">All speakers</button>
+</nav>
 <div id="app"></div>
 <script>
-const MANIFEST = null;
-const CURRENT = { hi: 'roopa', te: 'ritu' };
+// Speakers currently configured as defaults (tts_engine.py DEFAULT_VOICES).
+const CURRENT = { hi: 'priya', te: 'neha' };
 const TEXTS = { hi: 'नमस्ते! मैं आपकी कैसे मदद कर सकता हूं? कृपया अपना सवाल पूछें।', te: 'నమస్కారం! నేను మీకు ఎలా సహాయం చేయగలను? దయచేసి మీ ప్రశ్న అడగండి.' };
+const LANG_NAMES = { hi: 'Hindi (हिंदी)', te: 'Telugu (తెలుగు)' };
+
+// A/B slugs are grouped by the change they demonstrate, in listening order.
+const AB_GROUPS = [
+  ['Script sent to the voice model', ['script_roman', 'script_native']],
+  ['Streaming: continuous vs per-sentence', ['chunked', 'continuous']],
+  ['Speech pace', ['pace_140', 'pace_120', 'pace_100', 'pace_115', 'pace_095', 'pace_085']],
+  ['Speaker', ['speaker_roopa', 'speaker_priya', 'speaker_suhani', 'speaker_neha']],
+  ['Prosody variation (temperature)', ['temp_030', 'temp_060', 'temp_100']],
+];
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+let DATA = null;
+
+function card(item) {
+  const label = item.label || item.speaker || item.slug;
+  const kind = /before/i.test(label) ? 'before' : (/after/i.test(label) ? 'after' : '');
+  const tag = kind === 'before' ? 'before' : (kind === 'after' ? 'after' : '');
+  return `<div class="card ${kind}">
+    <div class="card-header">
+      <span class="name">${esc(label)}</span>
+      ${tag ? `<span class="tag">${tag}</span>` : `<span class="badge">${item.duration ? item.duration + 's' : ''}</span>`}
+    </div>
+    ${item.note ? `<div class="note">${esc(item.note)}</div>` : ''}
+    <audio controls src="/demo/voice/${esc(item.file)}" preload="none"></audio>
+  </div>`;
+}
+
+function renderAB() {
+  const ab = (DATA && DATA.ab) || null;
+  if (!ab) return `<p class="empty">No A/B samples yet — run <code>python generate_voice_samples.py</code>.</p>`;
+  let html = '';
+  for (const lang of ['hi', 'te']) {
+    const items = ab[lang] || [];
+    if (!items.length) continue;
+    const bySlug = Object.fromEntries(items.map(i => [i.slug, i]));
+    const text = items[0].text;
+    html += `<div class="lang-section"><div class="lang-header">${LANG_NAMES[lang]}</div>`;
+    html += `<div class="sample-text">${esc(text)}</div>`;
+    const shown = new Set();
+    for (const [title, slugs] of AB_GROUPS) {
+      const present = slugs.filter(s => bySlug[s]);
+      if (!present.length) continue;
+      present.forEach(s => shown.add(s));
+      html += `<div class="group"><h3>${esc(title)}</h3><div class="grid">`
+            + present.map(s => card(bySlug[s])).join('') + `</div></div>`;
+    }
+    const rest = items.filter(i => !shown.has(i.slug));
+    if (rest.length) {
+      html += `<div class="group"><h3>Other</h3><div class="grid">`
+            + rest.map(card).join('') + `</div></div>`;
+    }
+    html += `</div>`;
+  }
+  return html;
+}
+
+function renderSpeakers() {
+  const sp = (DATA && DATA.speakers) || null;
+  if (!sp) return `<p class="empty">No speaker sweep yet — run <code>python generate_voice_samples.py speakers</code>.</p>`;
+  let html = '';
+  for (const lang of ['hi', 'te']) {
+    const items = sp[lang] || [];
+    if (!items.length) continue;
+    html += `<div class="lang-section"><div class="lang-header">${LANG_NAMES[lang]} <span class="text">${esc(TEXTS[lang])}</span></div><div class="grid">`;
+    for (const item of items) {
+      const isCurrent = item.speaker === CURRENT[lang];
+      html += `<div class="card${isCurrent ? ' current' : ''}">
+        <div class="card-header">
+          <span class="name">${esc(item.speaker)}</span>
+          <span class="badge">${isCurrent ? 'DEFAULT' : (item.size > 200000 ? 'high' : 'std')}</span>
+        </div>
+        <audio controls src="/demo/voice/${esc(item.file)}" preload="none"></audio>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  return html;
+}
+
+function show(which) {
+  document.getElementById('tab-ab').classList.toggle('on', which === 'ab');
+  document.getElementById('tab-speakers').classList.toggle('on', which === 'speakers');
+  document.getElementById('app').innerHTML = which === 'ab' ? renderAB() : renderSpeakers();
+}
 
 async function load() {
   const res = await fetch('/demo/voice/sarvam/manifest.json');
-  const data = await res.json();
-  const app = document.getElementById('app');
-  const langs = ['hi', 'te'];
-  const langNames = { hi: 'Hindi (हिंदी)', te: 'Telugu (తెలుగు)' };
-
-  for (const lang of langs) {
-    const section = document.createElement('div');
-    section.className = 'lang-section';
-    section.innerHTML = `<div class="lang-header">${langNames[lang]} <span class="text">${TEXTS[lang]}</span></div><div class="grid"></div>`;
-    const grid = section.querySelector('.grid');
-
-    for (const item of data[lang]) {
-      const card = document.createElement('div');
-      card.className = 'card' + (item.speaker === CURRENT[lang] ? ' current' : '');
-      card.innerHTML = `
-        <div class="card-header">
-          <span class="name">${item.speaker}</span>
-          <span class="badge">${item.speaker === CURRENT[lang] ? 'CURRENT' : (item.size > 200000 ? 'high' : 'std')}</span>
-        </div>
-        <audio controls src="/demo/voice/${item.file}" preload="none"></audio>
-      `;
-      grid.appendChild(card);
-    }
-    app.appendChild(section);
-  }
+  DATA = await res.json();
+  // Tolerate the old manifest shape ({hi:[...], te:[...]} of speakers).
+  if (DATA && DATA.hi && !DATA.speakers && !DATA.ab) DATA = { speakers: DATA };
+  document.getElementById('tab-ab').onclick = () => show('ab');
+  document.getElementById('tab-speakers').onclick = () => show('speakers');
+  show(DATA.ab ? 'ab' : 'speakers');
 }
 load();
 </script>

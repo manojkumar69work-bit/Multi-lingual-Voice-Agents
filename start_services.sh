@@ -4,7 +4,11 @@
 # Architecture:
 #   - TTS microservice on :8002
 #   - Main voice server on :8000 (ASR + chat + /api/tts proxy)
-# Both use .venv
+#
+# Both use .venv12 (Python 3.12). Override with VENV=/path/to/venv.
+# The older .venv is Python 3.9 and its livekit-agents install is broken — it
+# can serve these two processes but cannot run agent.py, so everything points at
+# one environment that runs all four.
 #
 # /api/tts routes:
 #   language=hi|te and no voice set  →  forwarded to local :8002/synthesize
@@ -20,8 +24,9 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TTS_VENV="$PROJECT_DIR/.venv"
-MAIN_VENV="$PROJECT_DIR/.venv"
+VENV="${VENV:-$PROJECT_DIR/.venv12}"
+TTS_VENV="$VENV"
+MAIN_VENV="$VENV"
 TTS_LOG="/tmp/tts_service.log"
 MAIN_LOG="/tmp/main_server.log"
 TTS_PORT=8002

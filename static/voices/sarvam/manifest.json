@@ -1,376 +1,618 @@
 {
-  "hi": [
-    {
-      "speaker": "shubh",
-      "file": "sarvam/hi_shubh.wav",
-      "size": 173152
-    },
-    {
-      "speaker": "aditya",
-      "file": "sarvam/hi_aditya.wav",
-      "size": 180678
-    },
-    {
-      "speaker": "ritu",
-      "file": "sarvam/hi_ritu.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "priya",
-      "file": "sarvam/hi_priya.wav",
-      "size": 244652
-    },
-    {
-      "speaker": "neha",
-      "file": "sarvam/hi_neha.wav",
-      "size": 255942
-    },
-    {
-      "speaker": "rahul",
-      "file": "sarvam/hi_rahul.wav",
-      "size": 191968
-    },
-    {
-      "speaker": "pooja",
-      "file": "sarvam/hi_pooja.wav",
-      "size": 207020
-    },
-    {
-      "speaker": "rohan",
-      "file": "sarvam/hi_rohan.wav",
-      "size": 173152
-    },
-    {
-      "speaker": "simran",
-      "file": "sarvam/hi_simran.wav",
-      "size": 169388
-    },
-    {
-      "speaker": "kavya",
-      "file": "sarvam/hi_kavya.wav",
-      "size": 218310
-    },
-    {
-      "speaker": "amit",
-      "file": "sarvam/hi_amit.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "dev",
-      "file": "sarvam/hi_dev.wav",
-      "size": 188204
-    },
-    {
-      "speaker": "ishita",
-      "file": "sarvam/hi_ishita.wav",
-      "size": 191968
-    },
-    {
-      "speaker": "shreya",
-      "file": "sarvam/hi_shreya.wav",
-      "size": 188204
-    },
-    {
-      "speaker": "ratan",
-      "file": "sarvam/hi_ratan.wav",
-      "size": 161862
-    },
-    {
-      "speaker": "varun",
-      "file": "sarvam/hi_varun.wav",
-      "size": 218310
-    },
-    {
-      "speaker": "manan",
-      "file": "sarvam/hi_manan.wav",
-      "size": 199494
-    },
-    {
-      "speaker": "sumit",
-      "file": "sarvam/hi_sumit.wav",
-      "size": 191968
-    },
-    {
-      "speaker": "roopa",
-      "file": "sarvam/hi_roopa.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "kabir",
-      "file": "sarvam/hi_kabir.wav",
-      "size": 214546
-    },
-    {
-      "speaker": "aayan",
-      "file": "sarvam/hi_aayan.wav",
-      "size": 173152
-    },
-    {
-      "speaker": "ashutosh",
-      "file": "sarvam/hi_ashutosh.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "advait",
-      "file": "sarvam/hi_advait.wav",
-      "size": 173152
-    },
-    {
-      "speaker": "anand",
-      "file": "sarvam/hi_anand.wav",
-      "size": 180678
-    },
-    {
-      "speaker": "tanya",
-      "file": "sarvam/hi_tanya.wav",
-      "size": 240888
-    },
-    {
-      "speaker": "tarun",
-      "file": "sarvam/hi_tarun.wav",
-      "size": 184440
-    },
-    {
-      "speaker": "sunny",
-      "file": "sarvam/hi_sunny.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "mani",
-      "file": "sarvam/hi_mani.wav",
-      "size": 293574
-    },
-    {
-      "speaker": "gokul",
-      "file": "sarvam/hi_gokul.wav",
-      "size": 240888
-    },
-    {
-      "speaker": "vijay",
-      "file": "sarvam/hi_vijay.wav",
-      "size": 240888
-    },
-    {
-      "speaker": "shruti",
-      "file": "sarvam/hi_shruti.wav",
-      "size": 207020
-    },
-    {
-      "speaker": "suhani",
-      "file": "sarvam/hi_suhani.wav",
-      "size": 263468
-    },
-    {
-      "speaker": "mohit",
-      "file": "sarvam/hi_mohit.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "kavitha",
-      "file": "sarvam/hi_kavitha.wav",
-      "size": 229600
-    },
-    {
-      "speaker": "rehan",
-      "file": "sarvam/hi_rehan.wav",
-      "size": 218310
-    },
-    {
-      "speaker": "soham",
-      "file": "sarvam/hi_soham.wav",
-      "size": 207020
-    },
-    {
-      "speaker": "rupali",
-      "file": "sarvam/hi_rupali.wav",
-      "size": 207020
-    }
-  ],
-  "te": [
-    {
-      "speaker": "shubh",
-      "file": "sarvam/te_shubh.wav",
-      "size": 195730
-    },
-    {
-      "speaker": "aditya",
-      "file": "sarvam/te_aditya.wav",
-      "size": 225836
-    },
-    {
-      "speaker": "ritu",
-      "file": "sarvam/te_ritu.wav",
-      "size": 222072
-    },
-    {
-      "speaker": "priya",
-      "file": "sarvam/te_priya.wav",
-      "size": 270994
-    },
-    {
-      "speaker": "neha",
-      "file": "sarvam/te_neha.wav",
-      "size": 342496
-    },
-    {
-      "speaker": "rahul",
-      "file": "sarvam/te_rahul.wav",
-      "size": 237126
-    },
-    {
-      "speaker": "pooja",
-      "file": "sarvam/te_pooja.wav",
-      "size": 222072
-    },
-    {
-      "speaker": "rohan",
-      "file": "sarvam/te_rohan.wav",
-      "size": 210784
-    },
-    {
-      "speaker": "simran",
-      "file": "sarvam/te_simran.wav",
-      "size": 214546
-    },
-    {
-      "speaker": "kavya",
-      "file": "sarvam/te_kavya.wav",
-      "size": 248416
-    },
-    {
-      "speaker": "amit",
-      "file": "sarvam/te_amit.wav",
-      "size": 229600
-    },
-    {
-      "speaker": "dev",
-      "file": "sarvam/te_dev.wav",
-      "size": 237126
-    },
-    {
-      "speaker": "ishita",
-      "file": "sarvam/te_ishita.wav",
-      "size": 225836
-    },
-    {
-      "speaker": "shreya",
-      "file": "sarvam/te_shreya.wav",
-      "size": 274758
-    },
-    {
-      "speaker": "ratan",
-      "file": "sarvam/te_ratan.wav",
-      "size": 191968
-    },
-    {
-      "speaker": "varun",
-      "file": "sarvam/te_varun.wav",
-      "size": 244652
-    },
-    {
-      "speaker": "manan",
-      "file": "sarvam/te_manan.wav",
-      "size": 222072
-    },
-    {
-      "speaker": "sumit",
-      "file": "sarvam/te_sumit.wav",
-      "size": 210784
-    },
-    {
-      "speaker": "roopa",
-      "file": "sarvam/te_roopa.wav",
-      "size": 233362
-    },
-    {
-      "speaker": "kabir",
-      "file": "sarvam/te_kabir.wav",
-      "size": 218310
-    },
-    {
-      "speaker": "aayan",
-      "file": "sarvam/te_aayan.wav",
-      "size": 207020
-    },
-    {
-      "speaker": "ashutosh",
-      "file": "sarvam/te_ashutosh.wav",
-      "size": 282284
-    },
-    {
-      "speaker": "advait",
-      "file": "sarvam/te_advait.wav",
-      "size": 229600
-    },
-    {
-      "speaker": "anand",
-      "file": "sarvam/te_anand.wav",
-      "size": 240888
-    },
-    {
-      "speaker": "tanya",
-      "file": "sarvam/te_tanya.wav",
-      "size": 233362
-    },
-    {
-      "speaker": "tarun",
-      "file": "sarvam/te_tarun.wav",
-      "size": 248416
-    },
-    {
-      "speaker": "sunny",
-      "file": "sarvam/te_sunny.wav",
-      "size": 248416
-    },
-    {
-      "speaker": "mani",
-      "file": "sarvam/te_mani.wav",
-      "size": 342496
-    },
-    {
-      "speaker": "gokul",
-      "file": "sarvam/te_gokul.wav",
-      "size": 263468
-    },
-    {
-      "speaker": "vijay",
-      "file": "sarvam/te_vijay.wav",
-      "size": 278520
-    },
-    {
-      "speaker": "shruti",
-      "file": "sarvam/te_shruti.wav",
-      "size": 252178
-    },
-    {
-      "speaker": "suhani",
-      "file": "sarvam/te_suhani.wav",
-      "size": 255942
-    },
-    {
-      "speaker": "mohit",
-      "file": "sarvam/te_mohit.wav",
-      "size": 244652
-    },
-    {
-      "speaker": "kavitha",
-      "file": "sarvam/te_kavitha.wav",
-      "size": 248416
-    },
-    {
-      "speaker": "rehan",
-      "file": "sarvam/te_rehan.wav",
-      "size": 293574
-    },
-    {
-      "speaker": "soham",
-      "file": "sarvam/te_soham.wav",
-      "size": 263468
-    },
-    {
-      "speaker": "rupali",
-      "file": "sarvam/te_rupali.wav",
-      "size": 248416
-    }
-  ]
+  "speakers": {
+    "hi": [
+      {
+        "speaker": "shubh",
+        "file": "sarvam/hi_shubh.wav",
+        "size": 173152
+      },
+      {
+        "speaker": "aditya",
+        "file": "sarvam/hi_aditya.wav",
+        "size": 180678
+      },
+      {
+        "speaker": "ritu",
+        "file": "sarvam/hi_ritu.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "priya",
+        "file": "sarvam/hi_priya.wav",
+        "size": 244652
+      },
+      {
+        "speaker": "neha",
+        "file": "sarvam/hi_neha.wav",
+        "size": 255942
+      },
+      {
+        "speaker": "rahul",
+        "file": "sarvam/hi_rahul.wav",
+        "size": 191968
+      },
+      {
+        "speaker": "pooja",
+        "file": "sarvam/hi_pooja.wav",
+        "size": 207020
+      },
+      {
+        "speaker": "rohan",
+        "file": "sarvam/hi_rohan.wav",
+        "size": 173152
+      },
+      {
+        "speaker": "simran",
+        "file": "sarvam/hi_simran.wav",
+        "size": 169388
+      },
+      {
+        "speaker": "kavya",
+        "file": "sarvam/hi_kavya.wav",
+        "size": 218310
+      },
+      {
+        "speaker": "amit",
+        "file": "sarvam/hi_amit.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "dev",
+        "file": "sarvam/hi_dev.wav",
+        "size": 188204
+      },
+      {
+        "speaker": "ishita",
+        "file": "sarvam/hi_ishita.wav",
+        "size": 191968
+      },
+      {
+        "speaker": "shreya",
+        "file": "sarvam/hi_shreya.wav",
+        "size": 188204
+      },
+      {
+        "speaker": "ratan",
+        "file": "sarvam/hi_ratan.wav",
+        "size": 161862
+      },
+      {
+        "speaker": "varun",
+        "file": "sarvam/hi_varun.wav",
+        "size": 218310
+      },
+      {
+        "speaker": "manan",
+        "file": "sarvam/hi_manan.wav",
+        "size": 199494
+      },
+      {
+        "speaker": "sumit",
+        "file": "sarvam/hi_sumit.wav",
+        "size": 191968
+      },
+      {
+        "speaker": "roopa",
+        "file": "sarvam/hi_roopa.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "kabir",
+        "file": "sarvam/hi_kabir.wav",
+        "size": 214546
+      },
+      {
+        "speaker": "aayan",
+        "file": "sarvam/hi_aayan.wav",
+        "size": 173152
+      },
+      {
+        "speaker": "ashutosh",
+        "file": "sarvam/hi_ashutosh.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "advait",
+        "file": "sarvam/hi_advait.wav",
+        "size": 173152
+      },
+      {
+        "speaker": "anand",
+        "file": "sarvam/hi_anand.wav",
+        "size": 180678
+      },
+      {
+        "speaker": "tanya",
+        "file": "sarvam/hi_tanya.wav",
+        "size": 240888
+      },
+      {
+        "speaker": "tarun",
+        "file": "sarvam/hi_tarun.wav",
+        "size": 184440
+      },
+      {
+        "speaker": "sunny",
+        "file": "sarvam/hi_sunny.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "mani",
+        "file": "sarvam/hi_mani.wav",
+        "size": 293574
+      },
+      {
+        "speaker": "gokul",
+        "file": "sarvam/hi_gokul.wav",
+        "size": 240888
+      },
+      {
+        "speaker": "vijay",
+        "file": "sarvam/hi_vijay.wav",
+        "size": 240888
+      },
+      {
+        "speaker": "shruti",
+        "file": "sarvam/hi_shruti.wav",
+        "size": 207020
+      },
+      {
+        "speaker": "suhani",
+        "file": "sarvam/hi_suhani.wav",
+        "size": 263468
+      },
+      {
+        "speaker": "mohit",
+        "file": "sarvam/hi_mohit.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "kavitha",
+        "file": "sarvam/hi_kavitha.wav",
+        "size": 229600
+      },
+      {
+        "speaker": "rehan",
+        "file": "sarvam/hi_rehan.wav",
+        "size": 218310
+      },
+      {
+        "speaker": "soham",
+        "file": "sarvam/hi_soham.wav",
+        "size": 207020
+      },
+      {
+        "speaker": "rupali",
+        "file": "sarvam/hi_rupali.wav",
+        "size": 207020
+      }
+    ],
+    "te": [
+      {
+        "speaker": "shubh",
+        "file": "sarvam/te_shubh.wav",
+        "size": 195730
+      },
+      {
+        "speaker": "aditya",
+        "file": "sarvam/te_aditya.wav",
+        "size": 225836
+      },
+      {
+        "speaker": "ritu",
+        "file": "sarvam/te_ritu.wav",
+        "size": 222072
+      },
+      {
+        "speaker": "priya",
+        "file": "sarvam/te_priya.wav",
+        "size": 270994
+      },
+      {
+        "speaker": "neha",
+        "file": "sarvam/te_neha.wav",
+        "size": 342496
+      },
+      {
+        "speaker": "rahul",
+        "file": "sarvam/te_rahul.wav",
+        "size": 237126
+      },
+      {
+        "speaker": "pooja",
+        "file": "sarvam/te_pooja.wav",
+        "size": 222072
+      },
+      {
+        "speaker": "rohan",
+        "file": "sarvam/te_rohan.wav",
+        "size": 210784
+      },
+      {
+        "speaker": "simran",
+        "file": "sarvam/te_simran.wav",
+        "size": 214546
+      },
+      {
+        "speaker": "kavya",
+        "file": "sarvam/te_kavya.wav",
+        "size": 248416
+      },
+      {
+        "speaker": "amit",
+        "file": "sarvam/te_amit.wav",
+        "size": 229600
+      },
+      {
+        "speaker": "dev",
+        "file": "sarvam/te_dev.wav",
+        "size": 237126
+      },
+      {
+        "speaker": "ishita",
+        "file": "sarvam/te_ishita.wav",
+        "size": 225836
+      },
+      {
+        "speaker": "shreya",
+        "file": "sarvam/te_shreya.wav",
+        "size": 274758
+      },
+      {
+        "speaker": "ratan",
+        "file": "sarvam/te_ratan.wav",
+        "size": 191968
+      },
+      {
+        "speaker": "varun",
+        "file": "sarvam/te_varun.wav",
+        "size": 244652
+      },
+      {
+        "speaker": "manan",
+        "file": "sarvam/te_manan.wav",
+        "size": 222072
+      },
+      {
+        "speaker": "sumit",
+        "file": "sarvam/te_sumit.wav",
+        "size": 210784
+      },
+      {
+        "speaker": "roopa",
+        "file": "sarvam/te_roopa.wav",
+        "size": 233362
+      },
+      {
+        "speaker": "kabir",
+        "file": "sarvam/te_kabir.wav",
+        "size": 218310
+      },
+      {
+        "speaker": "aayan",
+        "file": "sarvam/te_aayan.wav",
+        "size": 207020
+      },
+      {
+        "speaker": "ashutosh",
+        "file": "sarvam/te_ashutosh.wav",
+        "size": 282284
+      },
+      {
+        "speaker": "advait",
+        "file": "sarvam/te_advait.wav",
+        "size": 229600
+      },
+      {
+        "speaker": "anand",
+        "file": "sarvam/te_anand.wav",
+        "size": 240888
+      },
+      {
+        "speaker": "tanya",
+        "file": "sarvam/te_tanya.wav",
+        "size": 233362
+      },
+      {
+        "speaker": "tarun",
+        "file": "sarvam/te_tarun.wav",
+        "size": 248416
+      },
+      {
+        "speaker": "sunny",
+        "file": "sarvam/te_sunny.wav",
+        "size": 248416
+      },
+      {
+        "speaker": "mani",
+        "file": "sarvam/te_mani.wav",
+        "size": 342496
+      },
+      {
+        "speaker": "gokul",
+        "file": "sarvam/te_gokul.wav",
+        "size": 263468
+      },
+      {
+        "speaker": "vijay",
+        "file": "sarvam/te_vijay.wav",
+        "size": 278520
+      },
+      {
+        "speaker": "shruti",
+        "file": "sarvam/te_shruti.wav",
+        "size": 252178
+      },
+      {
+        "speaker": "suhani",
+        "file": "sarvam/te_suhani.wav",
+        "size": 255942
+      },
+      {
+        "speaker": "mohit",
+        "file": "sarvam/te_mohit.wav",
+        "size": 244652
+      },
+      {
+        "speaker": "kavitha",
+        "file": "sarvam/te_kavitha.wav",
+        "size": 248416
+      },
+      {
+        "speaker": "rehan",
+        "file": "sarvam/te_rehan.wav",
+        "size": 293574
+      },
+      {
+        "speaker": "soham",
+        "file": "sarvam/te_soham.wav",
+        "size": 263468
+      },
+      {
+        "speaker": "rupali",
+        "file": "sarvam/te_rupali.wav",
+        "size": 248416
+      }
+    ]
+  },
+  "ab": {
+    "hi": [
+      {
+        "slug": "script_roman",
+        "label": "Script: Roman Hinglish (shipping)",
+        "note": "What the agent actually writes. Sarvam's docs warn a hi-IN voice reads Latin text with the wrong phonemes — this file is how you judge whether that is audible",
+        "file": "sarvam/ab_hi_script_roman.wav",
+        "size": 314924,
+        "duration": 6.56,
+        "text": "Ji bilkul! Main aapki madad kar sakti hoon. Aapka budget kitna hai? Aur kaun si location pasand hai aapko?"
+      },
+      {
+        "slug": "script_native",
+        "label": "Script: Devanagari (alternative)",
+        "note": "Same sentence in native script. If this is clearly cleaner, the fix is to transliterate before the TTS call — not to change what the LLM writes",
+        "file": "sarvam/ab_hi_script_native.wav",
+        "size": 356684,
+        "duration": 7.43,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "chunked",
+        "label": "Streaming: per-sentence (before)",
+        "note": "One TTS request per sentence — prosody restarts and each fragment's silence stacks in the gaps",
+        "file": "sarvam/ab_hi_chunked.wav",
+        "size": 312390,
+        "duration": 6.51,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "continuous",
+        "label": "Streaming: one WebSocket (after)",
+        "note": "Whole reply in one stream, so Bulbul v3 infers pauses and emphasis across sentences",
+        "file": "sarvam/ab_hi_continuous.wav",
+        "size": 339884,
+        "duration": 7.08,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "pace_140",
+        "label": "Pace 1.4 (before)",
+        "note": "40% faster than the rate the model is trained at",
+        "file": "sarvam/ab_hi_pace_140.wav",
+        "size": 238604,
+        "duration": 4.97,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "pace_120",
+        "label": "Pace 1.2",
+        "note": "Midpoint, for reference",
+        "file": "sarvam/ab_hi_pace_120.wav",
+        "size": 273644,
+        "duration": 5.7,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "pace_100",
+        "label": "Pace 1.0 (after)",
+        "note": "The rate Bulbul v3 is trained at",
+        "file": "sarvam/ab_hi_pace_100.wav",
+        "size": 325964,
+        "duration": 6.79,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "speaker_roopa",
+        "label": "Speaker: roopa (before)",
+        "note": "Not on Sarvam's recommended list for hi-IN",
+        "file": "sarvam/ab_hi_speaker_roopa.wav",
+        "size": 267404,
+        "duration": 5.57,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "speaker_priya",
+        "label": "Speaker: priya (after)",
+        "note": "Sarvam's recommended hi-IN voice",
+        "file": "sarvam/ab_hi_speaker_priya.wav",
+        "size": 388364,
+        "duration": 8.09,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "speaker_suhani",
+        "label": "Speaker: suhani",
+        "note": "Sarvam's other hi-IN recommendation",
+        "file": "sarvam/ab_hi_speaker_suhani.wav",
+        "size": 309164,
+        "duration": 6.44,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "temp_030",
+        "label": "Temperature 0.3",
+        "note": "Flatter, more repeatable delivery",
+        "file": "sarvam/ab_hi_temp_030.wav",
+        "size": 340844,
+        "duration": 7.1,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "temp_060",
+        "label": "Temperature 0.6 (default)",
+        "note": "Model default",
+        "file": "sarvam/ab_hi_temp_060.wav",
+        "size": 322604,
+        "duration": 6.72,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      },
+      {
+        "slug": "temp_100",
+        "label": "Temperature 1.0",
+        "note": "More prosodic variation, less predictable",
+        "file": "sarvam/ab_hi_temp_100.wav",
+        "size": 324044,
+        "duration": 6.75,
+        "text": "जी बिल्कुल! मैं आपकी मदद कर सकती हूँ। आपका budget कितना है? और कौन सी location पसंद है आपको?"
+      }
+    ],
+    "te": [
+      {
+        "slug": "speaker_roopa",
+        "label": "Speaker: roopa @1.15 (before)",
+        "note": "A Hindi-first speaker reused for Telugu, at the old pace",
+        "file": "sarvam/ab_te_speaker_roopa.wav",
+        "size": 200204,
+        "duration": 4.17,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "speaker_neha",
+        "label": "Speaker: neha @0.95 (after)",
+        "note": "Sarvam's recommended te-IN voice, at the new pace",
+        "file": "sarvam/ab_te_speaker_neha.wav",
+        "size": 344684,
+        "duration": 7.18,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "speaker_priya",
+        "label": "Speaker: priya @0.95",
+        "note": "Sarvam's other te-IN recommendation",
+        "file": "sarvam/ab_te_speaker_priya.wav",
+        "size": 235244,
+        "duration": 4.9,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "chunked",
+        "label": "Streaming: per-sentence (before)",
+        "note": "The old per-sentence path, for the seams",
+        "file": "sarvam/ab_te_chunked.wav",
+        "size": 316382,
+        "duration": 6.59,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "continuous",
+        "label": "Streaming: one WebSocket (after)",
+        "note": "Whole reply in one stream, so Bulbul v3 infers pauses across sentences",
+        "file": "sarvam/ab_te_continuous.wav",
+        "size": 288044,
+        "duration": 6.0,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "script_roman",
+        "label": "Script: Roman",
+        "note": "Telugu romanized, sent to a te-IN voice",
+        "file": "sarvam/ab_te_script_roman.wav",
+        "size": 340364,
+        "duration": 7.09,
+        "text": "Namaskaram! Cheppandi, meeku elanti illu kavali? Mee budget entha andi?"
+      },
+      {
+        "slug": "script_native",
+        "label": "Script: తెలుగు (shipping)",
+        "note": "What the agent writes: Telugu script with English loanwords left in Latin",
+        "file": "sarvam/ab_te_script_native.wav",
+        "size": 326924,
+        "duration": 6.81,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "pace_115",
+        "label": "Pace 1.15 (before)",
+        "note": "The old Telugu pace",
+        "file": "sarvam/ab_te_pace_115.wav",
+        "size": 265004,
+        "duration": 5.52,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "pace_095",
+        "label": "Pace 0.95 (shipping)",
+        "note": "Slightly under the trained rate",
+        "file": "sarvam/ab_te_pace_095.wav",
+        "size": 345644,
+        "duration": 7.2,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "pace_085",
+        "label": "Pace 0.85",
+        "note": "Slower still — often reads as more considered, less clipped",
+        "file": "sarvam/ab_te_pace_085.wav",
+        "size": 322604,
+        "duration": 6.72,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "temp_030",
+        "label": "Temperature 0.3",
+        "note": "Flatter, more repeatable delivery",
+        "file": "sarvam/ab_te_temp_030.wav",
+        "size": 319724,
+        "duration": 6.66,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "temp_060",
+        "label": "Temperature 0.6 (default)",
+        "note": "Model default",
+        "file": "sarvam/ab_te_temp_060.wav",
+        "size": 318284,
+        "duration": 6.63,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      },
+      {
+        "slug": "temp_100",
+        "label": "Temperature 1.0",
+        "note": "More prosodic variation — the usual cure for flat delivery",
+        "file": "sarvam/ab_te_temp_100.wav",
+        "size": 308204,
+        "duration": 6.42,
+        "text": "నమస్కారం! చెప్పండి, మీకు ఎలాంటి ఇల్లు కావాలి? మీ budget ఎంత అండి?"
+      }
+    ]
+  }
 }

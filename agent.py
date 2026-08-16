@@ -35,6 +35,7 @@ from livekit.agents import (
     JobProcess,
     WorkerOptions,
     cli,
+    inference,
     llm as aitts,
     stt as aistt,
     tts as aitts_tts,
@@ -54,45 +55,81 @@ except ImportError:
     _HAS_TRANSLITERATE = False
 
 
-def _tidy_itrans(out: str) -> str:
-    """Tidy common ITRANS artifacts so romanized text reads naturally.
+# One run of Indic script (plus the zero-width joiners that bind conjuncts).
+# Everything outside a match is left exactly as written — see romanize().
+_INDIC_RUN = re.compile("[ऀ-ॿఀ-౿‌‍]+")
 
-    Runs BEFORE lowercasing so the anusvara (ITRANS 'M') can be resolved by the
-    following consonant: 'm' before labials (p/b/m), 'n' otherwise — which is how
-    it's actually pronounced (e.g. andi, enti, cheppandi; but amba, sambar).
+
+def _tidy_itrans(out: str, *, drop_final_schwa: bool) -> str:
+    """Tidy ITRANS artifacts so romanized text reads like written Hinglish.
+
+    Order matters. This runs BEFORE lowercasing for two reasons:
+      - the anusvara (ITRANS 'M') resolves by the following consonant: 'm' before
+        labials (p/b/m), 'n' otherwise — how it's actually pronounced (andi, enti,
+        cheppandi; but amba, sambar);
+      - ITRANS marks LONG vowels with capitals (A/I/U). Lowercasing first
+        collapsed them into their short forms, which is what turned आपका into
+        "apaka" and हूँ into "hun".
+
+    `drop_final_schwa` is script-specific, not cosmetic: Hindi does not pronounce
+    the inherent final 'a' that ITRANS spells out (नाम → "naama" → naam), while
+    Telugu does (చెప్పండి → cheppandi). Applying Hindi's rule to Telugu would
+    clip the end off most words.
     """
     # Anusvara: keep 'm' before labials, else 'n'.
     out = re.sub(r"M(?=[pbmPBM])", "m", out)
     out = out.replace("M", "n")
+    # Long vowels, while the capitals still distinguish them.
+    for a, b in (("A", "aa"), ("I", "ee"), ("U", "oo")):
+        out = out.replace(a, b)
     out = out.lower()
     for a, b in ((".n", "n"), (".m", "m"), ("~", ""), ("||", "."), ("|", "."),
                  ("a.", "a"), ("rri", "ri"),
                  # Telugu short-vowel diacritics → plain Latin vowels
                  ("è", "e"), ("ò", "o"), ("ǎ", "a"), ("ŏ", "o"), ("ĕ", "e")):
         out = out.replace(a, b)
+    if drop_final_schwa:
+        # Only the FINAL schwa. Hindi also drops some medial ones (आपकी is
+        # "aapki", not "aapaki") but which ones is irregular — कितना → "kitna"
+        # drops it, हमारे → "hamare" keeps it — so a rule here would mangle as
+        # many words as it fixed. "aapaki" reads fine; "hmaare" would not.
+        out = re.sub(r"(?<=[bcdfghjklmnpqrstvwxyz])a\b", "", out)
+        # Two spellings ITRANS gets right phonetically but not conventionally.
+        out = re.sub(r"\bmen\b", "mein", out)      # में, very common
+        out = re.sub(r"ie\b", "iye", out)          # बताइए → bataiye
+    # Word-final long vowels take their conventional Hinglish short spelling.
+    out = re.sub(r"ee\b", "i", out)
+    out = re.sub(r"aa\b", "a", out)
     return out
 
 
 def romanize(text: str) -> str:
-    """Romanize Indic scripts (Devanagari / Telugu) into Latin letters for display.
+    """Romanize Indic scripts (Devanagari / Telugu) into Latin for display.
 
     The transcript should always read in English letters while keeping the spoken
-    content (Hinglish / romanized Telugu). Plain Latin text passes through untouched,
-    so English replies and already-Hinglish agent text are returned as-is.
+    content (Hinglish / romanized Telugu).
+
+    Only the Indic RUNS are transliterated; Latin words are returned byte for
+    byte. That matters now that replies are code-mixed — "आपका budget" has to
+    come out as "aapka budget", and transliterating the whole string used to
+    lowercase and mangle the English half ("BHK" → "bhk", "Riya" → "riy").
     """
-    if not text:
+    if not text or not _HAS_TRANSLITERATE:
         return text
-    has_devanagari = any("ऀ" <= c <= "ॿ" for c in text)
-    has_telugu = any("ఀ" <= c <= "౿" for c in text)
-    if not (has_devanagari or has_telugu):
-        return text
-    if not _HAS_TRANSLITERATE:
-        return text
+
+    def _sub(m: re.Match) -> str:
+        # Strip zero-width joiners/non-joiners so they don't leak into Latin.
+        run = m.group(0).replace("‌", "").replace("‍", "")
+        if not run:
+            return ""
+        is_telugu = any("ఀ" <= c <= "౿" for c in run)
+        script = TELUGU if is_telugu else DEVANAGARI
+        return _tidy_itrans(
+            transliterate(run, script, ITRANS), drop_final_schwa=not is_telugu
+        )
+
     try:
-        # Strip zero-width joiners/non-joiners so they don't leak into Latin output.
-        text = text.replace("‌", "").replace("‍", "")
-        script = DEVANAGARI if has_devanagari else TELUGU
-        return _tidy_itrans(transliterate(text, script, ITRANS))
+        return _INDIC_RUN.sub(_sub, text)
     except Exception:
         return text
 
@@ -114,14 +151,30 @@ STT_MODEL = os.environ.get("STT_MODEL", "whisper-large-v3")
 LOCAL_TTS_URL = os.environ.get("LOCAL_TTS_URL", "http://localhost:8002")
 LOCAL_TTS_TIMEOUT = float(os.environ.get("LOCAL_TTS_TIMEOUT", "30"))
 
-# Voice speed: 1.0 = normal, 1.4 ≈ natural fast conversational,
-# 1.5+ starts sounding rushed but still intelligible.
-TTS_PACE = float(os.environ.get("TTS_PACE", "1.4"))
+# Voice speed. Bulbul v3 accepts 0.5–2.0 and is trained at 1.0, so 1.0 is the
+# pace the model actually sounds human at. This used to sit at 1.4 — 40% fast —
+# which is the single loudest "rushed robot" cue on a call. Raise it only after
+# listening to the result, not to save seconds.
+TTS_PACE = float(os.environ.get("TTS_PACE", "1.0"))
 
 # Telugu words carry more syllables per word than Hindi, so the same pace value
 # lands much faster in the ear and the voice starts slurring conjuncts
 # (అపాయింట్‌మెంట్, కావాలంటే). Tune by ear with TTS_PACE_TE in .env.
-TTS_PACE_BY_LANG = {"te": float(os.environ.get("TTS_PACE_TE", "1.15"))}
+TTS_PACE_BY_LANG = {"te": float(os.environ.get("TTS_PACE_TE", "0.95"))}
+
+# Bulbul v3 sampling temperature (0.01–2.0, model default 0.6). This is what
+# governs prosodic variation: too low reads flat and identical every turn, too
+# high wanders in pitch and energy mid-sentence.
+TTS_TEMPERATURE = float(os.environ.get("TTS_TEMPERATURE", "0.6"))
+
+# Shared with tts_server.py, which streams PCM at this rate.
+TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
+
+# Semantic end-of-turn detection. Set TURN_DETECTION=0 to fall back to VAD-only
+# endpointing everywhere. Only languages the local model ships a threshold for
+# are eligible — Telugu is not one of them.
+TURN_DETECTION_ENABLED = os.environ.get("TURN_DETECTION", "1") not in ("0", "false", "False")
+TURN_DETECTION_LANGS = {"hi", "en"}
 
 LEAD_EXTRACT_MODEL = CHAT_MODEL
 
@@ -229,17 +282,19 @@ def build_system_prompt(tenant) -> str:
             f"at home and with friends. ABSOLUTELY NO bookish / formal / literary Telugu "
             f"(Grandhikam). This is the most important rule.\n"
             f"3. Use the simple everyday words people actually say, NOT their formal versions:\n"
-            f"   • ఇల్లు (not గృహము), డబ్బు / బడ్జెట్ (not ధనము/ద్రవ్యము), కొనడం (not క్రయము), "
+            f"   • ఇల్లు (not గృహము), డబ్బు / budget (not ధనము/ద్రవ్యము), కొనడం (not క్రయము), "
             f"కావాలి (not అవసరం), ఎంత (not ఎంత మొత్తం), ఎక్కడ (not ఏ ప్రాంతంలో), చూద్దాం (not పరిశీలిద్దాం), "
             f"చెప్పండి (not తెలియజేయండి), సరే/ఓకే (not అంగీకారం).\n"
             f"4. Sprinkle in natural conversational fillers and connectors the way real speakers do: "
             f"'ఆ', 'అవును', 'సరే', 'ఓకే', 'మంచిది', 'అలాగే', 'మరి', 'అయితే', 'ఇంకా', 'ఓహ్', 'అచ్చా', "
             f"'చూడండి'. Start replies warmly with little acknowledgements like 'ఆ సరే అండి', "
             f"'మంచిది అండి', 'ఓకే అండి'.\n"
-            f"5. Naturally blend the common English words everyday Telugu speakers mix in — write "
-            f"them in Telugu script as people say them: appointment (అపాయింట్‌మెంట్), time (టైమ్), "
-            f"free (ఫ్రీ), help (హెల్ప్), message (మెసేజ్), confirm (కన్ఫర్మ్), "
-            f"budget (బడ్జెట్), location (లొకేషన్), site visit (సైట్ విజిట్). Mixing English like this is NORMAL and sounds natural.\n"
+            f"5. Naturally blend in the common English words everyday Telugu speakers mix in, and "
+            f"write them in plain ENGLISH letters, not in Telugu script: appointment, time, free, "
+            f"help, message, confirm, budget, location, site visit, ready to move, home loan, EMI. "
+            f"So write 'మీ budget ఎంత అండి?' — never 'మీ బడ్జెట్ ఎంత అండి?'. Mixing English like "
+            f"this is NORMAL and sounds natural; forcing a bookish Telugu word where everyone says "
+            f"the English one is what sounds fake.\n"
             f"6. Keep sentences short, casual and flowing — like real talk, not announcements.\n"
             f"7. End sentences smoothly and politely with warm human markers like '~అండి' (andi) for "
             f"respect, '~గా' (ga), or '~కదా' (kada). Never end abruptly or harshly. But do NOT stack "
@@ -250,6 +305,19 @@ def build_system_prompt(tenant) -> str:
             f"9. Write numbers, times and prices as DIGITS (10:30, 2 BHK, 50 లక్షలు) — never spell "
             f"them out in Telugu words (not పది ముప్పై, not రెండు). The voice reads digits correctly "
             f"and spelled-out numerals sound like a news bulletin.\n\n"
+            # Examples anchor register far better than rules do. Every reply below is
+            # Vaaduka Bhasha with English loanwords left in Latin — the two things the
+            # rules above are most likely to drift away from over a long call.
+            f"Here is the register you are aiming for:\n"
+            f"  Caller: \"నాకు ఒక 3 BHK కావాలి.\"\n"
+            f"  You:    \"ఆ సరే అండి! 3 BHK కి మీ budget ఎంత అనుకుంటున్నారు?\"\n"
+            f"  Caller: \"ఓ 80 లక్షల దాకా.\"\n"
+            f"  You:    \"మంచిది అండి. మరి location ఏదైనా అనుకున్నారా?\"\n"
+            f"  Caller: \"Gachibowli side lo chusthunna.\"\n"
+            f"  You:    \"ఓకే అండి, Gachibowli అయితే మంచి options ఉన్నాయి. "
+            f"ఒక site visit కి time cheppagalara?\"\n"
+            f"Notice: short lines, 'అండి' once per sentence, English words in English "
+            f"letters, and not a single bookish word.\n\n"
             f"{_STYLE_HINT}\n\n"
             f"Over the conversation, {lead_hint}\n\n"
             f"{closing_hint}"
@@ -267,18 +335,56 @@ def build_system_prompt(tenant) -> str:
             f"Over the chat, {lead_hint}\n\n"
             f"{closing_hint}"
         )
-    # Default: Hinglish
+    # Default: Hinglish — Hindi written in Roman letters, freely mixed with English.
+    #
+    # This is the register urban Indian callers actually speak on the phone, and
+    # it is what the product is meant to sound like. It is deliberately NOT pure
+    # Hindi: a reply written in Devanagari pulls the LLM toward formal, newsreader
+    # Hindi, which is the opposite of the goal even when every individual word is
+    # correct.
+    #
+    # Known trade-off: Sarvam's docs say romanized Indic input degrades TTS
+    # pronunciation, since a hi-IN voice reads Latin text with the wrong phonemes.
+    # The A/B renders that settle it are already on disk — ab_hi_script_roman.wav
+    # vs ab_hi_script_native.wav. If Roman does sound worse by ear, the fix is a
+    # transliteration pass in front of the TTS call (Sarvam's Transliterate API),
+    # NOT changing what the LLM writes — the transcript and the register both
+    # depend on it staying Roman.
+    #
+    # romanize() (applied to both sides in on_conversation_item) is a no-op on
+    # Latin text, so the transcript is unaffected either way.
     return (
         f"You are {agent_name}, {role} for a {biz_type}. "
         f"You are on a live phone call with a potential customer. "
         f"Speak politely, clearly, and with warmth — like a trusted advisor.\n\n"
         f"{_SCOPE_GUARD}\n\n"
-        f"CRITICAL language rule: Reply ONLY in Hinglish — natural spoken Hindi written in "
-        f"Roman (English) letters. Example tone: 'Ji, bilkul. Main aapki madad kar sakti hoon. "
-        f"Aap kya dhoondh rahe hain?' "
-        f"NEVER use Devanagari script, and never reply in pure English.\n\n"
-        f"{_STYLE_HINT}\n"
-        f"- Use polite fillers like 'ji', 'kripya', 'dhanyavaad'.\n\n"
+        f"CRITICAL LANGUAGE RULES — sound like a real person on the phone, not a newsreader:\n"
+        f"1. Reply ONLY in HINGLISH — Hindi written in Roman (English) letters, mixed with "
+        f"English words. Never 'मैं आपकी मदद करूँगी', always 'Main aapki madad karungi'. "
+        f"NEVER use Devanagari script for anything.\n"
+        f"2. Mix English words in freely, exactly the way Hindi speakers do — budget, location, "
+        f"site visit, appointment, time, confirm, project, area, ready to move, home loan, EMI, "
+        f"sir, ma'am. 'Aapka budget kitna hai?' is right; forcing a pure-Hindi word like "
+        f"'bajat' is wrong. When both work, prefer the English word.\n"
+        f"3. Speak everyday SPOKEN Hindi — how people actually talk on the phone, not literary "
+        f"or Sanskritised Hindi. Use the common word, not its formal version: ghar (not grih), "
+        f"chahiye (not aavashyakta hai), bataiye (not avgat karaiye), kitna (not kis maatra mein), "
+        f"theek hai (not sweekarya hai).\n"
+        f"4. Sprinkle in the natural fillers real speakers use: 'ji', 'ji bilkul', 'achha', "
+        f"'theek hai', 'haan ji', 'arre waah', 'samajh gayi'. Open replies warmly — 'Ji bilkul', "
+        f"'Achha ji', 'Theek hai ji'.\n"
+        f"5. Keep sentences short, casual and flowing — like real talk, not an announcement.\n"
+        f"6. End politely with warm markers like '~ji' where it fits, but only ONE politeness "
+        f"marker per sentence — never stack them.\n"
+        f"7. Write numbers, times and prices as DIGITS (10:30, 2 BHK, 50 lakh) — never spell them "
+        f"out in words. The voice reads digits correctly and spelled-out numerals sound "
+        f"like a news bulletin.\n\n"
+        f"Here is the register you are aiming for:\n"
+        f"  Caller: \"Mujhe ek 3 BHK dekhna tha.\"\n"
+        f"  You:    \"Ji bilkul! 3 BHK ke liye aapka budget kitna hai?\"\n"
+        f"  Caller: \"Around 80 lakh.\"\n"
+        f"  You:    \"Achha ji, theek hai. Aur location kaun si pasand hai aapko?\"\n\n"
+        f"{_STYLE_HINT}\n\n"
         f"Over the chat, {lead_hint}\n\n"
         f"{closing_hint}"
     )
@@ -302,7 +408,9 @@ def build_greeting(tenant) -> str:
         # నమస్కారం, not నమస్తే — నమస్తే is the Hindi form; Telugu speakers answering
         # a phone say నమస్కారం.
         return (
-            f"నమస్కారం! నేను {agent_name}ని, మీ {biz_type} అసిస్టెంట్‌ని. "
+            # "assistant" in Latin, matching rule 5 of the Telugu system prompt —
+            # the greeting has to be in the same register as everything after it.
+            f"నమస్కారం! నేను {agent_name}ని, మీ {biz_type} assistantని. "
             f"చెప్పండి, మీ పేరు ఏంటి?"
         )
     if lang == "en":
@@ -310,6 +418,8 @@ def build_greeting(tenant) -> str:
             f"Hi! I'm {agent_name}, your {biz_type} assistant. "
             f"What's your name?"
         )
+    # Roman Hinglish — the same register the system prompt asks for, so the very
+    # first line the caller hears matches the rest of the call.
     return (
         f"Namaste! Main {agent_name} bol rahi hoon, aapki {biz_type} assistant. "
         f"Aapka shubh naam kya hai?"
@@ -344,8 +454,12 @@ def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str,
         parts = [
             f"{tenant_name} కస్టమర్ కాల్." if tenant_name else "కస్టమర్ సపోర్ట్ కాల్.",
             f"అసిస్టెంట్ పేరు {agent_name}." if agent_name else "",
-            "సాధారణ మాటలు: అపాయింట్‌మెంట్, టైమ్, ధర, రేటు, బడ్జెట్, లొకేషన్, "
-            "సైట్ విజిట్, డెమో, కాల్‌బ్యాక్, వాట్సాప్, ఈమెయిల్, కన్ఫర్మ్, ఫ్రీ, హెల్ప్.",
+            # Loanwords listed in Latin, matching the register the system prompt
+            # asks the agent for: Telugu words in Telugu script, English words in
+            # English letters. Whisper copies the prompt's script conventions into
+            # its output, so this keeps both sides of the transcript consistent.
+            "సాధారణ మాటలు: appointment, time, ధర, రేటు, budget, location, "
+            "site visit, demo, callback, WhatsApp, email, confirm, free, help.",
         ]
     else:
         parts = [
@@ -499,10 +613,13 @@ def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int) -> bytes:
 # ─── Custom TTS: Sarvam → Edge fallback via local service ────────────────────
 
 # Edge TTS voice per language (used only if the local TTS service is down).
+# All three are Indian-accent female voices, so a fallback mid-call is a drop in
+# quality rather than a jarring change of person. The English slot used to be
+# en-US-GuyNeural — an American man standing in for a female Indian persona.
 _EDGE_VOICE_BY_LANG = {
     "hi": "hi-IN-SwaraNeural",
     "te": "te-IN-ShrutiNeural",
-    "en": "en-US-GuyNeural",
+    "en": "en-IN-NeerjaNeural",
 }
 
 
@@ -510,7 +627,9 @@ class VoiceTTS(aitts_tts.TTS):
     def __init__(self, language: str = "hi", recorder=None):
         super().__init__(
             capabilities=aitts_tts.TTSCapabilities(streaming=False),
-            sample_rate=24000,
+            # Must match what the TTS service streams — both read TTS_SAMPLE_RATE,
+            # because a mismatch here is not an error, it is a pitch-shifted agent.
+            sample_rate=TTS_SAMPLE_RATE,
             num_channels=1,
         )
         self._language = language
@@ -549,10 +668,14 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
             if self._tts._recorder is not None:
                 self._tts._recorder.add_agent_pcm(pcm, self._tts.sample_rate)
 
-        # Primary: local TTS streaming endpoint. The service synthesizes the reply
-        # chunk-by-chunk and streams each WAV as soon as it's ready, so the caller
-        # starts hearing the first chunk while the rest is still being generated
-        # (instead of waiting for the whole reply via the batch /synthesize call).
+        # Primary: local TTS streaming endpoint. It relays one continuous Sarvam
+        # WebSocket stream per reply, so prosody carries across sentence
+        # boundaries and audio starts before the whole reply is synthesized.
+        #
+        # The response format is declared in X-TTS-Format rather than sniffed:
+        #   pcm_s16le  — raw PCM, pushed straight through (no ffmpeg at all)
+        #   wav_chunks — the service's fallback path: one WAV per sentence, which
+        #                still needs framing and decoding
         try:
             pushed = 0
             timeout = httpx.Timeout(LOCAL_TTS_TIMEOUT, connect=5.0)
@@ -560,40 +683,51 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                 async with client.stream(
                     "POST",
                     f"{LOCAL_TTS_URL}/stream",
-                    json={"text": text, "language": lang, "pace": pace},
+                    json={
+                        "text": text,
+                        "language": lang,
+                        "pace": pace,
+                        "temperature": TTS_TEMPERATURE,
+                    },
                 ) as resp:
                     if resp.status_code == 200:
-                        buffer = bytearray()
-                        # The endpoint concatenates one WAV per chunk. Frame each
-                        # off the buffer and convert it on its own task so ffmpeg
-                        # overlaps with the socket read and the server's synthesis
-                        # of later chunks. Tasks are drained in submission order so
-                        # the emitted PCM stays in sequence.
-                        tasks: list = []
-                        emitted = 0
-                        async for data in resp.aiter_bytes():
-                            buffer.extend(data)
-                            while (wav := _take_wav(buffer)) is not None:
-                                tasks.append(asyncio.create_task(_ffmpeg_to_pcm(wav)))
-                            # Flush leading conversions that have already finished,
-                            # without blocking on ones still running.
-                            while emitted < len(tasks) and tasks[emitted].done():
-                                pcm = tasks[emitted].result()
+                        fmt = resp.headers.get("X-TTS-Format", "wav_chunks")
+                        if fmt == "pcm_s16le":
+                            async for data in resp.aiter_bytes():
+                                if data:
+                                    _emit(data)
+                                    pushed += len(data)
+                        else:
+                            buffer = bytearray()
+                            # Frame each WAV off the buffer and convert it on its
+                            # own task so ffmpeg overlaps with the socket read and
+                            # the server's synthesis of later chunks. Tasks are
+                            # drained in submission order so PCM stays in sequence.
+                            tasks: list = []
+                            emitted = 0
+                            async for data in resp.aiter_bytes():
+                                buffer.extend(data)
+                                while (wav := _take_wav(buffer)) is not None:
+                                    tasks.append(asyncio.create_task(_ffmpeg_to_pcm(wav)))
+                                # Flush leading conversions that have already
+                                # finished, without blocking on ones still running.
+                                while emitted < len(tasks) and tasks[emitted].done():
+                                    pcm = tasks[emitted].result()
+                                    if pcm:
+                                        _emit(pcm)
+                                        pushed += len(pcm)
+                                    emitted += 1
+                            # Drain the remaining conversions in order.
+                            for task in tasks[emitted:]:
+                                pcm = await task
                                 if pcm:
                                     _emit(pcm)
                                     pushed += len(pcm)
-                                emitted += 1
-                        # Drain the remaining conversions in order.
-                        for task in tasks[emitted:]:
-                            pcm = await task
-                            if pcm:
-                                _emit(pcm)
-                                pushed += len(pcm)
             if pushed:
                 output_emitter.flush()
                 output_emitter.end_input()
                 logger.info(
-                    f"TTS (local /stream, lang={lang}, pace={pace}): "
+                    f"TTS (local /stream fmt={fmt}, lang={lang}, pace={pace}): "
                     f"{len(text)} chars -> {pushed} PCM bytes"
                 )
                 return
@@ -665,7 +799,7 @@ async def _ffmpeg_to_pcm(audio_bytes: bytes) -> bytes | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", "24000", "pipe:1",
+            "-i", "pipe:0", "-f", "s16le", "-ac", "1", "-ar", str(TTS_SAMPLE_RATE), "pipe:1",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -800,6 +934,21 @@ async def submit_lead(lead: dict, tenant, session_id: str = ""):
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
+    # Semantic end-of-turn detection, loaded here so the first caller doesn't pay
+    # for it. v1-mini runs locally on CPU (<500 MB, no LiveKit Cloud account), so
+    # it works against the self-hosted LiveKit in docker-compose.yml.
+    #
+    # VAD alone can only hear *that* someone stopped making noise, not whether
+    # they finished a thought — which is why the agent used to talk over a caller
+    # drawing breath mid-sentence, and cut itself off when they said "haan".
+    if TURN_DETECTION_ENABLED:
+        try:
+            proc.userdata["turn_detector"] = inference.TurnDetector(version="v1-mini")
+            logger.info("Turn detector (v1-mini, local) loaded")
+        except Exception as e:
+            # Not fatal: sessions fall back to VAD-only endpointing below.
+            logger.warning(f"Turn detector unavailable, using VAD-only endpointing: {e}")
+
 
 async def entrypoint(ctx: JobContext):
     logger.info(f"Connecting to room {ctx.room.name}")
@@ -854,16 +1003,52 @@ async def entrypoint(ctx: JobContext):
 
     from livekit.agents.tts import StreamAdapter
 
+    # Semantic turn detection, where the model has been trained for the language.
+    # The local detector ships per-language thresholds for hi (and en) but not te,
+    # so Telugu stays on VAD-only endpointing rather than being scored against a
+    # threshold picked for another language.
+    turn_detector = ctx.proc.userdata.get("turn_detector")
+    use_turn_detector = turn_detector is not None and tenant.language in TURN_DETECTION_LANGS
+
+    # An Indian caller backchannels constantly — "haan", "ji", "achha", "theek
+    # hai" — while the agent is still speaking. Under plain VAD every one of
+    # those is a barge-in, so the agent stopped dead mid-sentence: the loudest
+    # possible tell that it isn't a person.
+    #
+    # Endpointing delays are deliberately NOT set here. The SDK already tightens
+    # them (0.5/3.0 → 0.3/2.5) when a turn detector is active and leaves the
+    # longer pad when it isn't, which is exactly the behaviour we want per
+    # language — hardcoding numbers would only break that coupling.
+    turn_handling = {
+        "interruption": {
+            # Require a couple of words, not just any sound, before treating
+            # overlapping speech as an interruption (SDK default is 0).
+            "min_words": 2,
+            # Widen the window at the start of each agent turn in which the
+            # adaptive detector's "backchannel" verdict suppresses the
+            # interruption. Callers here acknowledge as the agent begins
+            # speaking, which is precisely when a stop is most jarring.
+            "backchannel_boundary": (1.5, 1.0),
+        },
+        # Start generating on the partial transcript rather than waiting for the
+        # turn to be confirmed. This is the SDK default; kept explicit because
+        # it's a deliberate latency choice, not an accident.
+        "preemptive_generation": {"enabled": True},
+    }
+    if use_turn_detector:
+        turn_handling["turn_detection"] = turn_detector
+
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
         stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name, tenant.language)),
         tts=StreamAdapter(
             tts=VoiceTTS(language=tenant.language, recorder=recorder), text_pacing=True
         ),
-        # Wait 0.5s of silence before deciding the caller has finished speaking,
-        # so short pauses mid-sentence don't cut them off (improves STT accuracy).
-        preemptive_generation=True,
-        min_endpointing_delay=0.5,
+        turn_handling=turn_handling,
+    )
+    logger.info(
+        f"Turn handling: {'semantic (v1-mini)' if use_turn_detector else 'VAD-only'} "
+        f"for lang={tenant.language}"
     )
 
     # Custom per-client prompt/greeting if the admin set one; else language template.

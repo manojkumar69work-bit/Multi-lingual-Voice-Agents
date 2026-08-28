@@ -1175,13 +1175,16 @@ async def entrypoint(ctx: JobContext):
         pass
     finally:
         duration = time.time() - start_time
-        if not lead_submitted:
-            lead_data = await extract_lead(transcript, tenant)
-            if lead_data:
-                call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
-                await submit_lead(lead_data, tenant, session_id)
-                lead_submitted = True
-                call_store.upsert_call(session_id, lead_submitted=True)
+        # Take the same lock: an auto-extraction may still be in flight from the
+        # last assistant turn, and both paths end in submit_lead().
+        async with lead_lock:
+            if not lead_submitted:
+                lead_data = await extract_lead(transcript, tenant)
+                if lead_data:
+                    call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
+                    await submit_lead(lead_data, tenant, session_id)
+                    lead_submitted = True
+                    call_store.upsert_call(session_id, lead_submitted=True)
 
         # AI summary for the CRM (best-effort).
         summary = await generate_summary(transcript, getattr(tenant, "business_type", ""))

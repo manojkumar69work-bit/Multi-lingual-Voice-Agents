@@ -1129,20 +1129,30 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.warning(f"publish transcript failed: {e}")
 
-        if role == "assistant" and not lead_submitted and len(transcript) >= 4:
-            asyncio.create_task(_auto_extract_and_submit(transcript))
+        if (role == "assistant" and not lead_submitted and not lead_extracting
+                and len(transcript) >= 4):
+            lead_extracting = True
+            # Snapshot the transcript: it keeps growing while the extraction runs.
+            asyncio.create_task(_auto_extract_and_submit(list(transcript)))
 
     async def _auto_extract_and_submit(conv: list[dict]):
-        nonlocal lead_submitted
-        lead_data = await extract_lead(conv, tenant)
-        if lead_data:
-            has_name = bool(lead_data.get("name"))
-            if has_name:
+        nonlocal lead_submitted, lead_extracting
+        try:
+            async with lead_lock:
+                if lead_submitted:
+                    return
+                lead_data = await extract_lead(conv, tenant)
+                if not (lead_data and lead_data.get("name")):
+                    return
                 call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
                 await submit_lead(lead_data, tenant, session_id)
                 lead_submitted = True
                 call_store.upsert_call(session_id, lead_submitted=True)
                 logger.info(f"Lead auto-submitted for {ctx.room.name}")
+        finally:
+            # Cleared only once the attempt is fully done, so the next assistant
+            # turn can retry when this extraction found no name yet.
+            lead_extracting = False
 
     # End the call promptly when the caller hangs up (so we finalize the
     # recording/summary right away instead of waiting out the timeout).

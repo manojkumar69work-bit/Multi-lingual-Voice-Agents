@@ -737,7 +737,15 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
         # Fallback: direct Edge TTS (slower, but always available).
         try:
             import edge_tts
-            rate = f"+{int((pace - 1) * 100)}%" if pace and pace != 1.0 else None
+            # edge-tts wants a signed percentage string ("+10%" / "-5%") and
+            # validates it, so both of the old expression's branches raised:
+            # hardcoding the "+" built "+-5%" for any pace below 1.0 (every
+            # Telugu call — TTS_PACE_TE defaults to 0.95), and `else None` was
+            # rejected outright ("rate must be str") at pace 1.0, the default
+            # for hi and en. Either way the except below swallowed it and the
+            # caller heard silence on the one path meant to prevent exactly that.
+            pct = int(round((pace - 1) * 100)) if pace else 0
+            rate = f"{pct:+d}%"
             edge_voice = _EDGE_VOICE_BY_LANG.get(lang, _EDGE_VOICE_BY_LANG["hi"])
             communicate = edge_tts.Communicate(text, voice=edge_voice, rate=rate)
             mp3_data = bytearray()

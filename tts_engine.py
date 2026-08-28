@@ -419,7 +419,12 @@ class EdgeProvider(TTSProvider):
 
         async def _stream() -> bytes:
             import edge_tts
-            rate = f"+{int((pace - 1) * 100)}%" if pace and pace > 1 else None
+            # Always a signed percentage string. edge-tts's own default is
+            # "+0%", but it rejects an explicit None ("rate must be str"), so
+            # the old `else None` broke this path at pace 1.0 — the default.
+            # `pace > 1` also silently dropped every slowdown (Telugu runs 0.95).
+            pct = int(round((pace - 1) * 100)) if pace else 0
+            rate = f"{pct:+d}%"
             communicate = edge_tts.Communicate(text, voice=edge_voice, rate=rate)
             mp3 = bytearray()
             async for chunk in communicate.stream():

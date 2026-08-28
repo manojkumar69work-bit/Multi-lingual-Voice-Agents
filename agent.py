@@ -1075,6 +1075,14 @@ async def entrypoint(ctx: JobContext):
 
     transcript: list[dict] = []
     lead_submitted = False
+    # `lead_submitted` alone cannot guard the extract→submit sequence: it is only
+    # set after two awaits (the Groq extraction, then the enqueue), so a second
+    # assistant turn landing inside that window spawned a second task and the
+    # client received the same lead twice — once on WhatsApp, once in the Sheet.
+    # `lead_extracting` closes the spawn window synchronously; the lock closes
+    # the remaining race against the final extraction in the finally block.
+    lead_extracting = False
+    lead_lock = asyncio.Lock()
 
     call_store.upsert_call(
         session_id,

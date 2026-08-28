@@ -184,9 +184,21 @@ def voice_demo():
 def sarvam_demo():
     return FileResponse(os.path.join(APP_DIR, "static", "sarvam_demo.html"))
 
+# Samples live in subdirectories too (static/voices/sarvam/...), so the route
+# has to accept a relative path — which means it must check where that path
+# actually lands. Without this, "%2e%2e%2f%2e%2e%2f.env" walked out of the
+# directory and served .env — API keys, SESSION_SECRET, the admin password — to
+# anyone, unauthenticated.
+_VOICES_DIR = os.path.realpath(os.path.join(APP_DIR, "static", "voices"))
+
+
 @app.get("/demo/voice/{filename:path}")
 def voice_file(filename: str):
-    return FileResponse(os.path.join(APP_DIR, "static", "voices", filename))
+    path = os.path.realpath(os.path.join(_VOICES_DIR, filename))
+    inside = path == _VOICES_DIR or path.startswith(_VOICES_DIR + os.sep)
+    if not inside or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Not found")
+    return FileResponse(path)
 
 
 # ─── Routes: health + LiveKit token ──────────────────────────────────────────

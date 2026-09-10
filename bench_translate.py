@@ -69,13 +69,61 @@ SENTENCES = [
 ]
 
 
+MAX_ATTEMPTS = 4
+
+# gpt-oss-120b is a reasoning model: max_tokens caps reasoning + content
+# together, and its trace for one short sentence runs ~700-850 tokens. At the 200
+# this script originally sent, `finish_reason` came back "length" with content
+# EMPTY — and that empty string was being counted as the model declining to
+# commit. It was our own cap. Tamil script also costs more tokens per character
+# than Latin, so the direct route hit the ceiling more often than the pivot,
+# which is very likely the whole of the "direct fails twice as often" result the
+# first run reported. Truncation is now measured separately and loudly (see
+# Turn.truncated) because a truncated sample is not a finding about a route.
+MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "1024"))
+
+
+class CallFailed(RuntimeError):
+    """A translation call that did not survive its retries. Costs one sentence,
+    not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
+    nothing is worse than one that reports 29 of 30."""
+
+
+def _post(url: str, headers: dict, payload: dict, *, timeout: float = 60.0) -> dict:
+    """POST with bounded retries on 429/5xx. Bounded matters: the previous
+    version recursed on 429 with no depth limit, so a sustained rate limit was
+    an infinite loop rather than an error you could read."""
+    last = ""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+        except httpx.HTTPError as e:
+            last = f"{type(e).__name__}: {e}"
+        else:
+            if r.status_code == 200:
+                return r.json()
+            last = f"HTTP {r.status_code}: {r.text[:200]}"
+            if r.status_code == 429:
+                wait = float(r.headers.get("retry-after", 8) or 8)
+                time.sleep(min(wait, 30))
+                continue
+            if r.status_code < 500:
+                break  # 400s do not fix themselves — a bad model name, a dead key
+        time.sleep(min(2 ** attempt, 20))
+    raise CallFailed(last)
+
+
 def _chat(prompt: str, text: str, *, max_tokens: int = 200) -> tuple[str, float]:
-    """One completion. Returns (output, elapsed_seconds)."""
+    """One completion. Returns (output, elapsed_seconds).
+
+    Elapsed is wall-clock request time only — the pacing sleep is taken after the
+    clock stops, so the latency numbers are not inflated by our own rate limiting.
+    """
     t0 = time.perf_counter()
-    r = httpx.post(
+    data = _post(
         f"{GROQ_BASE}/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-        json={
+        {"Authorization": f"Bearer {GROQ_API_KEY}"},
+        {
             "model": CHAT_MODEL,
             "messages": [
                 {"role": "system", "content": prompt},
@@ -85,17 +133,11 @@ def _chat(prompt: str, text: str, *, max_tokens: int = 200) -> tuple[str, float]
             "temperature": 0.0,
             "max_tokens": max_tokens,
         },
-        timeout=30.0,
     )
-    if r.status_code == 429:
-        wait = float(r.headers.get("retry-after", 8))
-        time.sleep(min(wait, 30))
-        return _chat(prompt, text, max_tokens=max_tokens)
-    r.raise_for_status()
-    out = r.json()["choices"][0]["message"]["content"].strip()
+    out = (data["choices"][0]["message"]["content"] or "").strip()
+    dt = time.perf_counter() - t0
     time.sleep(PACE_SLEEP)
-    return out, time.perf_counter() - t0
-
+    return out, dt
 
 # The instruction that makes incremental translation possible at all: the model
 # must be told it is seeing a fragment, and told never to revise what it already

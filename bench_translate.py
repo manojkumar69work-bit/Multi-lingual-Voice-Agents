@@ -25,7 +25,7 @@ Usage:  python bench_translate.py            # full run, ~2 min, a few cents
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -41,11 +41,15 @@ import time
 
 import httpx
 
-GROQ_BASE = os.environ.get("GROQ_BASE", "https://api.groq.com/openai/v1")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-# NB: llama-3.3-70b-versatile — the default in agent.py:144 — has been
-# decommissioned by Groq and now 404s. Benchmarked against a live model.
-CHAT_MODEL = os.environ.get("BENCH_MODEL", "openai/gpt-oss-120b")
+
+# Below this you are contradicting yourself in the listener's ear often enough
+# that they would rather have waited for you to finish. It is the product bar,
+# and it is a separate question from whether direct beats the pivot.
+SPEAKABLE = 0.85
+
+LANG = {"te": "Telugu", "ta": "Tamil", "en": "English"}
+LANG_CODE = {"te": "te-IN", "ta": "ta-IN", "en": "en-IN"}
+
 
 # Conversational speech runs ~2.5-3 words/sec. Telugu sits at the low end because
 # the words are longer. This is what makes the streaming simulation honest: a
@@ -56,6 +60,62 @@ WORDS_PER_SEC = 2.8
 # Groq's free tier rate-limits on burst. Spacing calls keeps the sample complete
 # rather than truncated at whatever point the 429 lands.
 PACE_SLEEP = float(os.environ.get("BENCH_SLEEP", "1.5"))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backends
+#
+# The whole point of the flag: hold the sentences, prompts, cut points and
+# scoring fixed and swap only the translator. Anything that differs between two
+# runs other than the model is a confound, so the backends deliberately share
+# one request path and one retry policy.
+# ─────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class Backend:
+    name: str
+    kind: str          # "chat" = OpenAI-compatible /chat/completions; "mt" = Sarvam /translate
+    base: str
+    key_env: str
+    model: str
+    note: str
+    # An MT endpoint takes text, not instructions. It cannot be told "you are
+    # seeing a fragment, never revise" — so its stability score is raw MT
+    # stability, which is a fair thing to measure and a different thing to
+    # measure. Flagged rather than hidden.
+    honors_incremental: bool = True
+
+
+BACKENDS: dict[str, Backend] = {
+    # NB: llama-3.3-70b-versatile — the default in agent.py:144 — has been
+    # decommissioned by Groq and now 404s. Benchmarked against a live model.
+    "groq": Backend(
+        name="groq",
+        kind="chat",
+        base=os.environ.get("GROQ_BASE", "https://api.groq.com/openai/v1"),
+        key_env="GROQ_API_KEY",
+        model=os.environ.get("BENCH_MODEL", "openai/gpt-oss-120b"),
+        note="general-purpose, no Indic specialisation — the control",
+    ),
+    # sarvam-m is deprecated and 400s; sarvam-105b is the live model. Same
+    # OpenAI-compatible shape as Groq, so the prompts carry over verbatim.
+    "sarvam": Backend(
+        name="sarvam",
+        kind="chat",
+        base="https://api.sarvam.ai/v1",
+        key_env="SARVAM_API_KEY",
+        model=os.environ.get("BENCH_SARVAM_MODEL", "sarvam-105b"),
+        note="Indic-tuned LLM, identical prompts — the experiment",
+    ),
+    "sarvam-translate": Backend(
+        name="sarvam-translate",
+        kind="mt",
+        base="https://api.sarvam.ai",
+        key_env="SARVAM_API_KEY",
+        model=os.environ.get("BENCH_SARVAM_MT_MODEL", "sarvam-translate:v1"),
+        note="dedicated Indic MT — cannot be instructed, measures raw MT stability",
+        honors_incremental=False,
+    ),
+}
+
 
 # Real business-call utterances, all verb-final, all the shape this product would
 # actually see. Held in Telugu script the way Whisper returns it, English
@@ -99,33 +159,56 @@ SENTENCES = [
 ]
 
 
-def _chat(prompt: str, text: str) -> Turn:
-    """One completion.
+def translate(
+    be: Backend, src: str, tgt: str, text: str, *, incremental: bool
+) -> Turn:
+    """One translation.
 
     Elapsed is wall-clock request time only — the pacing sleep is taken after the
     clock stops, so the latency numbers are not inflated by our own rate limiting.
     """
+    key = os.environ.get(be.key_env, "")
     t0 = time.perf_counter()
-    data = _post(
-        f"{GROQ_BASE}/chat/completions",
-        {"Authorization": f"Bearer {GROQ_API_KEY}"},
-        {
-            "model": CHAT_MODEL,
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text},
-            ],
-            # Deterministic: we are measuring the route, not sampling noise.
-            "temperature": 0.0,
-            "max_tokens": MAX_TOKENS,
-        },
-    )
-    choice = data["choices"][0]
-    out = (choice["message"]["content"] or "").strip()
-    truncated = choice.get("finish_reason") == "length"
+
+    if be.kind == "mt":
+        data = _post(
+            f"{be.base}/translate",
+            {"api-subscription-key": key, "Content-Type": "application/json"},
+            {
+                "input": text,
+                "source_language_code": LANG_CODE[src],
+                "target_language_code": LANG_CODE[tgt],
+                "model": be.model,
+            },
+        )
+        out = (data.get("translated_text") or "").strip()
+        truncated = False
+    else:
+        sysmsg = (_INCREMENTAL if incremental else _FULL).format(
+            src=LANG[src], tgt=LANG[tgt]
+        )
+        data = _post(
+            f"{be.base}/chat/completions",
+            {"Authorization": f"Bearer {key}"},
+            {
+                "model": be.model,
+                "messages": [
+                    {"role": "system", "content": sysmsg},
+                    {"role": "user", "content": text},
+                ],
+                # Deterministic: we are measuring the route, not sampling noise.
+                "temperature": 0.0,
+                "max_tokens": MAX_TOKENS,
+            },
+        )
+        choice = data["choices"][0]
+        out = (choice["message"]["content"] or "").strip()
+        truncated = choice.get("finish_reason") == "length"
+
     dt = time.perf_counter() - t0
     time.sleep(PACE_SLEEP)
     return Turn(text=out, seconds=dt, truncated=truncated)
+
 
 # The instruction that makes incremental translation possible at all: the model
 # must be told it is seeing a fragment, and told never to revise what it already
@@ -144,9 +227,6 @@ _FULL = (
     "Translate the following {src} text to {tgt}. "
     "Output only the translation, nothing else."
 )
-
-LANG = {"te": "Telugu", "ta": "Tamil", "en": "English"}
-
 
 # Indic sentence terminators as well as ASCII: a Tamil or Telugu output ending
 # in a danda would otherwise count as a different word from the same word
@@ -206,7 +286,7 @@ class StabilityRun:
     error: str | None = None
 
 
-def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
+def stability_run(be: Backend, sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
     """Feed growing prefixes; report mean prefix stability across steps."""
     words = sentence.split()
     cuts = _cut_points(len(words), steps)
@@ -221,9 +301,8 @@ def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
     last_good = ""
     for n in cuts:
         frag = " ".join(words[:n])
-        sysmsg = _INCREMENTAL.format(src=LANG["te"], tgt=LANG[tgt])
         try:
-            turn = _chat(sysmsg, frag)
+            turn = translate(be, "te", tgt, frag, incremental=True)
         except CallFailed as e:
             run.error = str(e)
             run.steps.append({"words": n, "of": len(words), "error": str(e)})
@@ -358,6 +437,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Prefix stability and time-to-first-audio for direct vs pivoted translation."
     )
+    ap.add_argument("--backend", default="groq", choices=sorted(BACKENDS),
+                    help="which translator to measure (default: groq)")
+    ap.add_argument("--model", help="override the backend's model id")
     ap.add_argument("--limit", type=int, default=0,
                     help="use only the first N sentences (0 = all; 10 = the original sample)")
     ap.add_argument("--steps", type=int, default=5,
@@ -366,18 +448,28 @@ def main() -> int:
     ap.add_argument("--json", dest="json_path", help="write raw results here")
     args = ap.parse_args()
 
-    if not GROQ_API_KEY:
-        print("GROQ_API_KEY not set", file=sys.stderr)
+    be = BACKENDS[args.backend]
+    if args.model:
+        be = replace(be, model=args.model)
+
+    if not os.environ.get(be.key_env):
+        print(f"{be.key_env} not set (required for --backend {be.name})", file=sys.stderr)
         return 1
 
     corpus = SENTENCES[: args.limit] if args.limit > 0 else SENTENCES
 
-    print(f"model={CHAT_MODEL}")
-    print(f"n={len(corpus)} sentences  steps={args.steps}  speech_rate={WORDS_PER_SEC} w/s\n")
+    print(f"backend={be.name}  model={be.model}  ({be.note})")
+    print(f"n={len(corpus)} sentences  steps={args.steps}  speech_rate={WORDS_PER_SEC} w/s")
+    if not be.honors_incremental:
+        print("NOTE: this backend takes text, not instructions. It cannot be told")
+        print("      'never revise', so Part 1 measures raw MT stability.")
+    print()
 
     results: dict = {
         "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "model": CHAT_MODEL,
+        "backend": be.name,
+        "model": be.model,
+        "honors_incremental": be.honors_incremental,
         "n_sentences": len(corpus),
         "steps": args.steps,
         "words_per_sec": WORDS_PER_SEC,
@@ -395,8 +487,8 @@ def main() -> int:
     cuts_direct = cuts_pivot = 0
     wins = ties = losses = 0
     for i, s in enumerate(corpus, 1):
-        d = stability_run(s, "ta", steps=args.steps)
-        p = stability_run(s, "en", steps=args.steps)
+        d = stability_run(be, s, "ta", steps=args.steps)
+        p = stability_run(be, s, "en", steps=args.steps)
         bad_direct += d.degenerate
         bad_pivot += p.degenerate
         trunc_direct += d.truncated
@@ -499,9 +591,9 @@ def main() -> int:
             # Route A — pivot, consecutive. What Samsung/Jio ship. You cannot
             # start until the speaker stops, then you pay two hops plus TTS.
             try:
-                t1 = _chat(_FULL.format(src="Telugu", tgt="English"), s)
+                t1 = translate(be, "te", "en", s, incremental=False)
                 _guard(t1, "te→en")
-                t2 = _chat(_FULL.format(src="English", tgt="Tamil"), t1.text)
+                t2 = translate(be, "en", "ta", t1.text, incremental=False)
                 _guard(t2, "en→ta")
                 mt = t1.seconds + t2.seconds
                 t_tts, prov, _ = timed_synth(t2.text, "ta")
@@ -515,7 +607,7 @@ def main() -> int:
 
             # Route B — direct, consecutive. One hop instead of two.
             try:
-                t1 = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
+                t1 = translate(be, "te", "ta", s, incremental=False)
                 _guard(t1, "te→ta")
                 t_tts, prov, _ = timed_synth(t1.text, "ta")
                 row["b"] = speak_time + t1.seconds + t_tts
@@ -532,7 +624,7 @@ def main() -> int:
             cut = max(2, int(len(words) * 0.6))
             try:
                 partial = " ".join(words[:cut])
-                head = _chat(_INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
+                head = translate(be, "te", "ta", partial, incremental=True)
                 _guard(head, "te→ta partial")
                 if _is_degenerate(head.text):
                     # No audio to play means no time to first audio. Scoring this
@@ -608,37 +700,59 @@ def main() -> int:
     # Two separate questions, and conflating them is how you ship a bad product:
     # (a) is direct BETTER than the pivot — the research claim;
     # (b) is direct GOOD ENOUGH to speak before the sentence ends — the product bar.
-    # Below ~85% you are contradicting yourself in the listener's ear often enough
-    # that they would rather have waited.
-    SPEAKABLE = 0.85
-
     print("\nVERDICT")
-    if md > mp + 0.15 and md >= SPEAKABLE:
-        print(f"  Thesis HOLDS and clears the product bar. Direct is {md - mp:.0%} more")
+    gap = md - mp
+    if gap > 0.15 and md >= SPEAKABLE:
+        verdict = "holds_and_speakable"
+        print(f"  Thesis HOLDS and clears the product bar. Direct is {gap:.0%} more")
         print(f"  stable than the pivot, at {md:.0%} absolute (≥{SPEAKABLE:.0%}).")
         print("  → Build Phase 2 (incremental translation) on the direct route.")
-    elif md > mp + 0.15:
-        print(f"  Thesis holds DIRECTIONALLY: direct is {md - mp:.0%} more stable than the")
-        print(f"  English pivot. But {md:.0%} absolute is below the {SPEAKABLE:.0%} needed to")
-        print("  commit speech mid-sentence — at this level you would contradict")
-        print("  yourself in the listener's ear roughly half the time.")
-        print("  → The word-order argument is real. The current model is not good")
-        print("     enough to exploit it. Next variable is the MODEL, not the route:")
-        print("     try an Indic-tuned model (Sarvam, or IndicTrans2 via Bhashini)")
-        print("     before concluding anything about the architecture.")
+    elif gap > 0.15:
+        verdict = "holds_directionally"
+        print(f"  Thesis holds DIRECTIONALLY: direct is {gap:.0%} more stable than the")
+        print(f"  English pivot, and wins {wins} of {len(corpus)} sentences outright.")
+        print(f"  But {md:.0%} absolute is below the {SPEAKABLE:.0%} needed to commit speech")
+        print("  mid-sentence — at this level you would contradict yourself in the")
+        print("  listener's ear too often to be worth the head start.")
+        print("  → The word-order argument is real. This model cannot exploit it.")
+        if be.name == "groq":
+            print("  → Next variable is the MODEL, not the route. Re-run this exact")
+            print("     command with --backend sarvam (Indic-tuned, same prompts)")
+            print("     before concluding anything about the architecture.")
+        else:
+            print(f"  → Already on {be.name}. If an Indic-tuned model still sits below")
+            print(f"     {SPEAKABLE:.0%}, the constraint is likelier the task than the model:")
+            print("      re-scope Phase 2 to phrase-level commitment, or ship Phase 1.")
         if bad_direct > bad_pivot:
             print(f"  ⚠  Direct also failed outright more often ({bad_direct} vs {bad_pivot}")
             print("     degenerate outputs). Reliability, not just stability, is a blocker.")
-    elif md > mp:
-        print(f"  Thesis WEAK. Direct is only {md - mp:.0%} more stable — real but")
+    elif gap > 0.05:
+        verdict = "weak"
+        print(f"  Thesis WEAK. Direct is only {gap:.0%} more stable — real but")
         print("  probably not a defensible advantage on its own.")
-        print("  → Re-run with more sentences before committing to the architecture.")
+        print(f"  (direct wins {wins}, ties {ties}, pivot wins {losses})")
+        print("  → Widen the corpus or change the model before committing.")
     else:
+        verdict = "fails"
         print("  Thesis FAILS. Direct is no more stable than the English pivot.")
         print("  → The SOV argument does not survive contact with this model.")
         print("  → Differentiate on telephony + voice quality instead, not latency.")
 
-    out_path = args.json_path or f"bench_{len(corpus)}s.json"
+    # Dropping the English hop is a real latency win regardless of how the
+    # stability question lands, and it needs no incremental machinery at all.
+    if save_ab is not None and save_ab > 0:
+        print(f"\n  Independent of all that: the direct route is {save_ab:.2f}s faster")
+        print("  end-to-end than the pivot on consecutive translation alone, which")
+        print("  Phase 1 already gets for free. That part is not contingent.")
+    if mc is not None and md < SPEAKABLE:
+        print(f"\n  The {mc:.2f}s Route C number is a ceiling, not a promise: at {md:.0%}")
+        print("  stability that audio is sometimes wrong. Do not quote it as a")
+        print("  product latency until stability clears the bar.")
+
+    results["verdict"] = verdict
+    results["speakable_threshold"] = SPEAKABLE
+
+    out_path = args.json_path or f"bench_{be.name}_{len(corpus)}s.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     print(f"\nraw results → {out_path}")

@@ -26,12 +26,14 @@ Usage:  python bench_translate.py            # full run, ~2 min, a few cents
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
 import argparse
+import json
 import os
 import statistics
 import sys
@@ -56,7 +58,13 @@ WORDS_PER_SEC = 2.8
 PACE_SLEEP = float(os.environ.get("BENCH_SLEEP", "1.5"))
 
 # Real business-call utterances, all verb-final, all the shape this product would
-# actually see. Held in Telugu script the way Whisper returns it.
+# actually see. Held in Telugu script the way Whisper returns it, English
+# loanwords included, because that is how the language is actually spoken on a
+# sales call and stripping them would be benchmarking a sentence nobody says.
+#
+# The first ten are the original sample the funding pitch quotes; --limit 10
+# reproduces those numbers exactly. The rest exist because n=10 is too small to
+# conclude anything from, which the first run said in its own output.
 SENTENCES = [
     "మా దగ్గర Kondapur లో మూడు bedroom flat ఒకటి available గా ఉంది",
     "మీరు చెప్పిన budget లో ఆ property దొరకడం కొంచెం కష్టం అవుతుంది అండి",
@@ -68,65 +76,27 @@ SENTENCES = [
     "మేము ఇచ్చే possession date కి ఎలాంటి delay ఉండదని hundred percent guarantee",
     "మీరు investment కోసం చూస్తున్నారా లేక సొంతంగా ఉండటానికి కొంటున్నారా",
     "ఆ builder గురించి market లో మంచి పేరు ఉంది కాబట్టి risk తక్కువ",
+    "ఆ apartment లో lift మరియు generator backup రెండూ ఉన్నాయి సార్",
+    "మీకు వీలైతే ఈ weekend లో ఒకసారి office కి వచ్చి కలవండి",
+    "ఆ plot కి clear title ఉంది మరియు అన్ని documents ready గా ఉన్నాయి",
+    "నేను మీకు WhatsApp లో floor plan మరియు price sheet పంపిస్తాను",
+    "ఈ price లో negotiation కి ఇంకా కొంచెం scope ఉందని owner చెప్పారు",
+    "మీరు అడిగిన two BHK ఆ building లో ఇప్పుడు ఖాళీగా లేదు అండి",
+    "maintenance charges నెలకు square feet కి మూడు rupees అవుతుంది",
+    "ఆ colony లో school మరియు hospital రెండూ నడక దూరంలో ఉన్నాయి",
+    "loan కోసం మీ salary slips మరియు bank statement కావాలి సార్",
+    "ఈ deal ఈ నెల లోపు finalize చేస్తే discount ఇస్తామని అన్నారు",
+    "ఆ property మీద ఇప్పటికే ఒక booking amount pay అయిపోయింది",
+    "మీ family తో కలిసి ఒకసారి site చూసి decision తీసుకోండి",
+    "రేపు మధ్యాహ్నం రెండు గంటలకు నేను మీకు call చేస్తాను సార్",
+    "ఆ tower లో east facing flats అన్నీ already sold out అయ్యాయి",
+    "registration అయిన వెంటనే keys మీ చేతికి ఇచ్చేస్తాము అండి",
+    "ఈ builder గత పది సంవత్సరాలలో పన్నెండు projects పూర్తి చేశారు",
+    "మీరు cash payment చేస్తే GST మీద కొంత తగ్గింపు వస్తుంది",
+    "ఆ flat కి car parking slot ఒకటి free గా included ఉంది",
+    "మీ budget చెబితే నేను దానికి సరిపోయే options వెతికి పెడతాను",
+    "ఆ area లో metro station వచ్చే సంవత్సరం లోపు పూర్తి అవుతుంది",
 ]
-
-
-MAX_ATTEMPTS = 4
-
-# gpt-oss-120b is a reasoning model: max_tokens caps reasoning + content
-# together, and its trace for one short sentence runs ~700-850 tokens. At the 200
-# this script originally sent, `finish_reason` came back "length" with content
-# EMPTY — and that empty string was being counted as the model declining to
-# commit. It was our own cap. Tamil script also costs more tokens per character
-# than Latin, so the direct route hit the ceiling more often than the pivot,
-# which is very likely the whole of the "direct fails twice as often" result the
-# first run reported. Truncation is now measured separately and loudly (see
-# Turn.truncated) because a truncated sample is not a finding about a route.
-MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "1024"))
-
-
-@dataclass(frozen=True)
-class Turn:
-    """One translation and how it ended."""
-    text: str
-    seconds: float
-    truncated: bool = False   # finish_reason == "length": our budget, not their choice
-
-
-class CallFailed(RuntimeError):
-    """A translation call that did not survive its retries. Costs one sentence,
-    not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
-    nothing is worse than one that reports 29 of 30."""
-
-
-class CallFailed(RuntimeError):
-    """A translation call that did not survive its retries. Costs one sentence,
-    not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
-    nothing is worse than one that reports 29 of 30."""
-
-
-def _post(url: str, headers: dict, payload: dict, *, timeout: float = 60.0) -> dict:
-    """POST with bounded retries on 429/5xx. Bounded matters: the previous
-    version recursed on 429 with no depth limit, so a sustained rate limit was
-    an infinite loop rather than an error you could read."""
-    last = ""
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
-        except httpx.HTTPError as e:
-            last = f"{type(e).__name__}: {e}"
-        else:
-            if r.status_code == 200:
-                return r.json()
-            last = f"HTTP {r.status_code}: {r.text[:200]}"
-            if r.status_code == 429:
-                wait = float(r.headers.get("retry-after", 8) or 8)
-                time.sleep(min(wait, 30))
-                continue
-            if r.status_code < 500:
-                break  # 400s do not fix themselves — a bad model name, a dead key
-        time.sleep(min(2 ** attempt, 20))
-    raise CallFailed(last)
 
 
 def _chat(prompt: str, text: str) -> Turn:
@@ -385,15 +355,34 @@ def warm_tts() -> str | None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--no-tts", action="store_true", help="skip Sarvam calls")
+    ap = argparse.ArgumentParser(
+        description="Prefix stability and time-to-first-audio for direct vs pivoted translation."
+    )
+    ap.add_argument("--limit", type=int, default=0,
+                    help="use only the first N sentences (0 = all; 10 = the original sample)")
+    ap.add_argument("--steps", type=int, default=5,
+                    help="prefix cut points per sentence (default 5)")
+    ap.add_argument("--no-tts", action="store_true", help="skip Part 2 / all TTS calls")
+    ap.add_argument("--json", dest="json_path", help="write raw results here")
     args = ap.parse_args()
 
     if not GROQ_API_KEY:
         print("GROQ_API_KEY not set", file=sys.stderr)
         return 1
 
-    print(f"model={CHAT_MODEL}  speech_rate={WORDS_PER_SEC} w/s\n")
+    corpus = SENTENCES[: args.limit] if args.limit > 0 else SENTENCES
+
+    print(f"model={CHAT_MODEL}")
+    print(f"n={len(corpus)} sentences  steps={args.steps}  speech_rate={WORDS_PER_SEC} w/s\n")
+
+    results: dict = {
+        "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "model": CHAT_MODEL,
+        "n_sentences": len(corpus),
+        "steps": args.steps,
+        "words_per_sec": WORDS_PER_SEC,
+        "sentences": [],
+    }
 
     # ── Part 1: prefix stability ─────────────────────────────────────────────
     print("=" * 72)
@@ -404,9 +393,10 @@ def main() -> int:
     bad_direct = bad_pivot = 0
     trunc_direct = trunc_pivot = 0
     cuts_direct = cuts_pivot = 0
-    for i, s in enumerate(SENTENCES, 1):
-        d = stability_run(s, "ta")
-        p = stability_run(s, "en")
+    wins = ties = losses = 0
+    for i, s in enumerate(corpus, 1):
+        d = stability_run(s, "ta", steps=args.steps)
+        p = stability_run(s, "en", steps=args.steps)
         bad_direct += d.degenerate
         bad_pivot += p.degenerate
         trunc_direct += d.truncated
@@ -415,6 +405,16 @@ def main() -> int:
         cuts_pivot += p.n_cuts
         direct.append(d.mean)
         pivot.append(p.mean)
+
+        # A mean of means hides the shape. Per-sentence outcomes say whether one
+        # route wins broadly or wins one sentence hugely, which are different
+        # claims and only the first is defensible.
+        if d.mean - p.mean > 0.05:
+            wins += 1
+        elif p.mean - d.mean > 0.05:
+            losses += 1
+        else:
+            ties += 1
 
         print(f"\n[{i}] {s}")
         for label, run in (("te→ta (direct, SOV→SOV)", d), ("te→en (pivot,  SOV→SVO)", p)):
@@ -435,10 +435,17 @@ def main() -> int:
                     sc = st.get("stability")
                     print(f"        {tag} {st['out']}"
                           + (f"   ({sc:.0%} kept)" if sc is not None else ""))
+        results["sentences"].append({
+            "sentence": s,
+            "direct": d.__dict__,
+            "pivot": p.__dict__,
+        })
 
     md, mp = statistics.mean(direct), statistics.mean(pivot)
+    med_d, med_p = statistics.median(direct), statistics.median(pivot)
     print("\n" + "-" * 72)
     print(f"  MEAN STABILITY   te→ta {md:.0%}   |   te→en {mp:.0%}")
+    print(f"  MEDIAN           te→ta {med_d:.0%}   |   te→en {med_p:.0%}")
     print(f"  DEGENERATE OUT   te→ta {bad_direct}/{cuts_direct}"
           f"  |   te→en {bad_pivot}/{cuts_pivot}")
     if trunc_direct or trunc_pivot:
@@ -447,8 +454,21 @@ def main() -> int:
               f"   ⚠ instrument fault, not a result")
         print(f"                   raise BENCH_MAX_TOKENS above {MAX_TOKENS} and re-run;"
               " these steps are excluded")
-    print(f"  n = {len(SENTENCES)} sentences — small. Treat as a signal, not a result.")
+    print(f"  PER-SENTENCE     direct wins {wins}, ties {ties}, pivot wins {losses}"
+          f"  (of {len(corpus)})")
+    if len(corpus) < 20:
+        print(f"  n = {len(corpus)} sentences — small. Treat as a signal, not a result.")
     print("-" * 72)
+
+    results["part1"] = {
+        "mean_direct": md, "mean_pivot": mp,
+        "median_direct": med_d, "median_pivot": med_p,
+        "degenerate_direct": bad_direct, "degenerate_pivot": bad_pivot,
+        "truncated_direct": trunc_direct, "truncated_pivot": trunc_pivot,
+        "max_tokens": MAX_TOKENS,
+        "cuts_direct": cuts_direct, "cuts_pivot": cuts_pivot,
+        "sentence_wins_direct": wins, "ties": ties, "sentence_wins_pivot": losses,
+    }
 
     # ── Part 2: time to first audio ──────────────────────────────────────────
     if not args.no_tts:
@@ -461,7 +481,7 @@ def main() -> int:
         providers: set[str] = set()
 
         rows = []
-        for s in SENTENCES:
+        for s in corpus:
             words = s.split()
             speak_time = len(words) / WORDS_PER_SEC
 
@@ -543,6 +563,11 @@ def main() -> int:
         print("  Thesis FAILS. Direct is no more stable than the English pivot.")
         print("  → The SOV argument does not survive contact with this model.")
         print("  → Differentiate on telephony + voice quality instead, not latency.")
+
+    out_path = args.json_path or f"bench_{len(corpus)}s.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    print(f"\nraw results → {out_path}")
     return 0
 
 

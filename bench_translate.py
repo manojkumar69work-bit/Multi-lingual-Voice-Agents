@@ -85,6 +85,20 @@ MAX_ATTEMPTS = 4
 MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "1024"))
 
 
+@dataclass(frozen=True)
+class Turn:
+    """One translation and how it ended."""
+    text: str
+    seconds: float
+    truncated: bool = False   # finish_reason == "length": our budget, not their choice
+
+
+class CallFailed(RuntimeError):
+    """A translation call that did not survive its retries. Costs one sentence,
+    not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
+    nothing is worse than one that reports 29 of 30."""
+
+
 class CallFailed(RuntimeError):
     """A translation call that did not survive its retries. Costs one sentence,
     not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
@@ -115,8 +129,8 @@ def _post(url: str, headers: dict, payload: dict, *, timeout: float = 60.0) -> d
     raise CallFailed(last)
 
 
-def _chat(prompt: str, text: str, *, max_tokens: int = 200) -> tuple[str, float]:
-    """One completion. Returns (output, elapsed_seconds).
+def _chat(prompt: str, text: str) -> Turn:
+    """One completion.
 
     Elapsed is wall-clock request time only — the pacing sleep is taken after the
     clock stops, so the latency numbers are not inflated by our own rate limiting.
@@ -133,13 +147,15 @@ def _chat(prompt: str, text: str, *, max_tokens: int = 200) -> tuple[str, float]
             ],
             # Deterministic: we are measuring the route, not sampling noise.
             "temperature": 0.0,
-            "max_tokens": max_tokens,
+            "max_tokens": MAX_TOKENS,
         },
     )
-    out = (data["choices"][0]["message"]["content"] or "").strip()
+    choice = data["choices"][0]
+    out = (choice["message"]["content"] or "").strip()
+    truncated = choice.get("finish_reason") == "length"
     dt = time.perf_counter() - t0
     time.sleep(PACE_SLEEP)
-    return out, dt
+    return Turn(text=out, seconds=dt, truncated=truncated)
 
 # The instruction that makes incremental translation possible at all: the model
 # must be told it is seeing a fragment, and told never to revise what it already
@@ -215,6 +231,7 @@ class StabilityRun:
     scores: list[float] = field(default_factory=list)
     steps: list[dict] = field(default_factory=list)
     degenerate: int = 0
+    truncated: int = 0
     n_cuts: int = 0
     error: str | None = None
 
@@ -236,13 +253,23 @@ def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
         frag = " ".join(words[:n])
         sysmsg = _INCREMENTAL.format(src=LANG["te"], tgt=LANG[tgt])
         try:
-            out, dt = _chat(sysmsg, frag)
+            turn = _chat(sysmsg, frag)
         except CallFailed as e:
             run.error = str(e)
             run.steps.append({"words": n, "of": len(words), "error": str(e)})
             continue
 
-        rec: dict = {"words": n, "of": len(words), "out": out, "latency_s": round(dt, 3)}
+        out = turn.text
+        rec: dict = {"words": n, "of": len(words), "out": out,
+                     "latency_s": round(turn.seconds, 3)}
+        # Truncation is an instrument fault, not a result. Counted apart from
+        # degeneracy and excluded from scoring: charging a route for our own
+        # token budget is how the first run concluded direct was less reliable.
+        if turn.truncated:
+            run.truncated += 1
+            rec["truncated"] = True
+            run.steps.append(rec)
+            continue
         if _is_degenerate(out):
             run.degenerate += 1
             rec["degenerate"] = True
@@ -324,6 +351,24 @@ def timed_synth(text: str, lang: str) -> tuple[float, str, int]:
     raise RuntimeError(last)
 
 
+class Truncated(RuntimeError):
+    """A translation cut off by our own token budget.
+
+    Raised before the text can reach TTS. Sending an empty translation to the
+    synthesizer made every provider fail and printed "All TTS providers failed
+    for lang=ta", which sent the first investigation of this after a TTS bug
+    that did not exist.
+    """
+
+
+def _guard(turn: Turn, leg: str) -> None:
+    if turn.truncated:
+        raise Truncated(f"{leg} truncated at {MAX_TOKENS} tokens "
+                        f"(raise BENCH_MAX_TOKENS)")
+    if not turn.text:
+        raise Truncated(f"{leg} returned nothing")
+
+
 def warm_tts() -> str | None:
     """One throwaway synthesis before the clock matters.
 
@@ -357,12 +402,15 @@ def main() -> int:
 
     direct, pivot = [], []
     bad_direct = bad_pivot = 0
+    trunc_direct = trunc_pivot = 0
     cuts_direct = cuts_pivot = 0
     for i, s in enumerate(SENTENCES, 1):
         d = stability_run(s, "ta")
         p = stability_run(s, "en")
         bad_direct += d.degenerate
         bad_pivot += p.degenerate
+        trunc_direct += d.truncated
+        trunc_pivot += p.truncated
         cuts_direct += d.n_cuts
         cuts_pivot += p.n_cuts
         direct.append(d.mean)
@@ -372,11 +420,15 @@ def main() -> int:
         for label, run in (("te→ta (direct, SOV→SOV)", d), ("te→en (pivot,  SOV→SVO)", p)):
             print(f"    {label}: {run.mean:.0%}"
                   f"  (scored {len(run.scores)}/{max(run.n_cuts - 1, 0)} transitions"
-                  f"{f', {run.degenerate} degenerate' if run.degenerate else ''})")
+                  f"{f', {run.degenerate} degenerate' if run.degenerate else ''}"
+                  f"{f', {run.truncated} TRUNCATED' if run.truncated else ''})")
             for st in run.steps:
                 tag = f"[{st['words']}/{st['of']}w]"
                 if "error" in st:
                     print(f"        {tag} <<CALL FAILED>> {st['error']}")
+                elif st.get("truncated"):
+                    print(f"        {tag} <<TRUNCATED at {MAX_TOKENS} tokens — raise "
+                          f"BENCH_MAX_TOKENS>> {st['out']!r}")
                 elif st.get("degenerate"):
                     print(f"        {tag} <<DEGENERATE>> {st['out']!r}")
                 else:
@@ -389,6 +441,12 @@ def main() -> int:
     print(f"  MEAN STABILITY   te→ta {md:.0%}   |   te→en {mp:.0%}")
     print(f"  DEGENERATE OUT   te→ta {bad_direct}/{cuts_direct}"
           f"  |   te→en {bad_pivot}/{cuts_pivot}")
+    if trunc_direct or trunc_pivot:
+        print(f"  TRUNCATED        te→ta {trunc_direct}/{cuts_direct}"
+              f"  |   te→en {trunc_pivot}/{cuts_pivot}"
+              f"   ⚠ instrument fault, not a result")
+        print(f"                   raise BENCH_MAX_TOKENS above {MAX_TOKENS} and re-run;"
+              " these steps are excluded")
     print(f"  n = {len(SENTENCES)} sentences — small. Treat as a signal, not a result.")
     print("-" * 72)
 
@@ -409,34 +467,37 @@ def main() -> int:
 
             # Route A — pivot, consecutive. What Samsung/Jio ship. You cannot start
             # until the speaker stops, then you pay two LLM hops plus TTS.
-            en, t_en = _chat(_FULL.format(src="Telugu", tgt="English"), s)
-            ta_via_en, t_pivot = _chat(_FULL.format(src="English", tgt="Tamil"), en)
-            t_tts_a, prov_a, _ = timed_synth(ta_via_en, "ta")
-            a = speak_time + t_en + t_pivot + t_tts_a
+            t1 = _chat(_FULL.format(src="Telugu", tgt="English"), s)
+            _guard(t1, "te→en")
+            t2 = _chat(_FULL.format(src="English", tgt="Tamil"), t1.text)
+            _guard(t2, "en→ta")
+            t_tts_a, prov_a, _ = timed_synth(t2.text, "ta")
+            a = speak_time + t1.seconds + t2.seconds + t_tts_a
 
             # Route B — direct, consecutive. One hop instead of two.
-            ta_direct, t_dir = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
-            t_tts_b, prov_b, _ = timed_synth(ta_direct, "ta")
-            b = speak_time + t_dir + t_tts_b
+            t3 = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
+            _guard(t3, "te→ta")
+            t_tts_b, prov_b, _ = timed_synth(t3.text, "ta")
+            b = speak_time + t3.seconds + t_tts_b
 
             # Route C — direct, incremental. Translate at 60% of the utterance and
             # start speaking then. Only legitimate if Part 1 says the prefix holds.
             cut = max(2, int(len(words) * 0.6))
             partial = " ".join(words[:cut])
-            head, t_head = _chat(
-                _INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
-            t_tts_c, prov_c, _ = timed_synth(head, "ta") if head else (0.0, None, 0)
-            c = (cut / WORDS_PER_SEC) + t_head + t_tts_c
+            head = _chat(_INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
+            _guard(head, "te→ta partial")
+            t_tts_c, prov_c, _ = timed_synth(head.text, "ta")
+            c = (cut / WORDS_PER_SEC) + head.seconds + t_tts_c
 
             providers.update(p for p in (prov_a, prov_b, prov_c) if p)
             rows.append((a, b, c))
             print(f"\n  {s[:50]}...")
             print(f"    A pivot consecutive   {a:6.2f}s "
-                  f"(speak {speak_time:.1f} + mt {t_en + t_pivot:.2f} + tts {t_tts_a:.2f})")
+                  f"(speak {speak_time:.1f} + mt {t1.seconds + t2.seconds:.2f} + tts {t_tts_a:.2f})")
             print(f"    B direct consecutive  {b:6.2f}s "
-                  f"(speak {speak_time:.1f} + mt {t_dir:.2f} + tts {t_tts_b:.2f})")
+                  f"(speak {speak_time:.1f} + mt {t3.seconds:.2f} + tts {t_tts_b:.2f})")
             print(f"    C direct incremental  {c:6.2f}s "
-                  f"(speak {cut / WORDS_PER_SEC:.1f} + mt {t_head:.2f} + tts {t_tts_c:.2f})")
+                  f"(speak {cut / WORDS_PER_SEC:.1f} + mt {head.seconds:.2f} + tts {t_tts_c:.2f})")
 
         ma = statistics.mean(r[0] for r in rows)
         mb = statistics.mean(r[1] for r in rows)

@@ -20,13 +20,31 @@ If the bet is right, two things show up in the numbers:
 If stability for te→ta is not clearly above te→en, the thesis is wrong and the
 cheap thing to do is find that out here rather than after building the pipeline.
 
-Usage:  python bench_translate.py            # full run, ~2 min, a few cents
-        python bench_translate.py --no-tts   # stability only, no Sarvam calls
+The first run of this (n=10, gpt-oss-120b) said: direction proven — 53% direct vs
+28% pivot — level not there, since ~85% is what speaking mid-sentence needs. That
+left one open question, which is why this script now takes --backend: is 53% a
+fact about the ROUTE or a fact about a model with no Indic training? Run it
+against both and the answer stops being a guess.
+
+Two numbers from that first run should NOT be quoted any more. It sent
+max_tokens=200 to a reasoning model whose trace alone runs ~800 tokens, so
+"degenerate" outputs were often just our own budget cutting the answer off
+(see MAX_TOKENS) — and Tamil costs more tokens than English, so the cap hit the
+direct route harder and manufactured most of the "direct fails twice as often,
+12 vs 6" result. Truncation is now counted separately and never scored. Re-run
+before citing either figure; --limit 10 restores that sample, not its numbers.
+
+Usage:
+    python bench_translate.py                        # full corpus, ~20 min
+    python bench_translate.py --limit 10             # the original 10-sentence sample
+    python bench_translate.py --no-tts               # stability only, no TTS calls
+    python bench_translate.py --backend sarvam       # Indic-tuned LLM, same prompts
+    python bench_translate.py --backend sarvam-translate --no-tts   # dedicated Indic MT
+    python bench_translate.py --json out.json        # keep the raw numbers
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+import os
 
 from dotenv import load_dotenv
 
@@ -34,13 +52,23 @@ load_dotenv()
 
 import argparse
 import json
-import os
 import statistics
 import sys
 import time
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 
 import httpx
 
+# Conversational speech runs ~2.5-3 words/sec. Telugu sits at the low end because
+# the words are longer. This is what makes the streaming simulation honest: a
+# 12-word sentence takes ~4.3s to say, and that is the budget a real simultaneous
+# translator is spending against.
+WORDS_PER_SEC = 2.8
+
+# Free tiers rate-limit on burst. Spacing calls keeps the sample complete rather
+# than truncated at whatever point the 429 lands.
+PACE_SLEEP = float(os.environ.get("BENCH_SLEEP", "1.5"))
 
 # Below this you are contradicting yourself in the listener's ear often enough
 # that they would rather have waited for you to finish. It is the product bar,
@@ -50,16 +78,6 @@ SPEAKABLE = 0.85
 LANG = {"te": "Telugu", "ta": "Tamil", "en": "English"}
 LANG_CODE = {"te": "te-IN", "ta": "ta-IN", "en": "en-IN"}
 
-
-# Conversational speech runs ~2.5-3 words/sec. Telugu sits at the low end because
-# the words are longer. This is what makes the streaming simulation honest: a
-# 12-word sentence takes ~4.3s to say, and that is the budget a real simultaneous
-# translator is spending against.
-WORDS_PER_SEC = 2.8
-
-# Groq's free tier rate-limits on burst. Spacing calls keeps the sample complete
-# rather than truncated at whatever point the 429 lands.
-PACE_SLEEP = float(os.environ.get("BENCH_SLEEP", "1.5"))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Backends
@@ -159,6 +177,76 @@ SENTENCES = [
 ]
 
 
+# The instruction that makes incremental translation possible at all: the model
+# must be told it is seeing a fragment, and told never to revise what it already
+# committed. Without the second half it happily rewrites the whole sentence every
+# time a word arrives, which is exactly the flicker that forces you to wait.
+_INCREMENTAL = (
+    "You are a simultaneous interpreter translating {src} to {tgt}. "
+    "You will receive a PARTIAL sentence that is still being spoken. "
+    "Translate only what you can commit to with certainty. It is correct to "
+    "output less than the input if the rest depends on words not yet spoken. "
+    "Never revise or re-order what you have already translated. "
+    "Output only the {tgt} translation, nothing else."
+)
+
+_FULL = (
+    "Translate the following {src} text to {tgt}. "
+    "Output only the translation, nothing else."
+)
+
+MAX_ATTEMPTS = 4
+
+# gpt-oss-120b is a reasoning model: max_tokens caps reasoning + content
+# together, and its trace for one short sentence runs ~700-850 tokens. At the 200
+# this script originally sent, `finish_reason` came back "length" with content
+# EMPTY — and that empty string was being counted as the model declining to
+# commit. It was our own cap. Tamil script also costs more tokens per character
+# than Latin, so the direct route hit the ceiling more often than the pivot,
+# which is very likely the whole of the "direct fails twice as often" result the
+# first run reported. Truncation is now measured separately and loudly (see
+# Turn.truncated) because a truncated sample is not a finding about a route.
+MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "1024"))
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One translation and how it ended."""
+    text: str
+    seconds: float
+    truncated: bool = False   # finish_reason == "length": our budget, not their choice
+
+
+class CallFailed(RuntimeError):
+    """A translation call that did not survive its retries. Costs one sentence,
+    not the whole run — a 20-minute benchmark that dies at sentence 24 and prints
+    nothing is worse than one that reports 29 of 30."""
+
+
+def _post(url: str, headers: dict, payload: dict, *, timeout: float = 60.0) -> dict:
+    """POST with bounded retries on 429/5xx. Bounded matters: the previous
+    version recursed on 429 with no depth limit, so a sustained rate limit was
+    an infinite loop rather than an error you could read."""
+    last = ""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            r = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+        except httpx.HTTPError as e:
+            last = f"{type(e).__name__}: {e}"
+        else:
+            if r.status_code == 200:
+                return r.json()
+            last = f"HTTP {r.status_code}: {r.text[:200]}"
+            if r.status_code == 429:
+                wait = float(r.headers.get("retry-after", 8) or 8)
+                time.sleep(min(wait, 30))
+                continue
+            if r.status_code < 500:
+                break  # 400s do not fix themselves — a bad model name, a dead key
+        time.sleep(min(2 ** attempt, 20))
+    raise CallFailed(last)
+
+
 def translate(
     be: Backend, src: str, tgt: str, text: str, *, incremental: bool
 ) -> Turn:
@@ -210,24 +298,9 @@ def translate(
     return Turn(text=out, seconds=dt, truncated=truncated)
 
 
-# The instruction that makes incremental translation possible at all: the model
-# must be told it is seeing a fragment, and told never to revise what it already
-# committed. Without the second half it happily rewrites the whole sentence every
-# time a word arrives, which is exactly the flicker that forces you to wait.
-_INCREMENTAL = (
-    "You are a simultaneous interpreter translating {src} to {tgt}. "
-    "You will receive a PARTIAL sentence that is still being spoken. "
-    "Translate only what you can commit to with certainty. It is correct to "
-    "output less than the input if the rest depends on words not yet spoken. "
-    "Never revise or re-order what you have already translated. "
-    "Output only the {tgt} translation, nothing else."
-)
-
-_FULL = (
-    "Translate the following {src} text to {tgt}. "
-    "Output only the translation, nothing else."
-)
-
+# ─────────────────────────────────────────────────────────────────────────────
+# Part 1 — prefix stability
+# ─────────────────────────────────────────────────────────────────────────────
 # Indic sentence terminators as well as ASCII: a Tamil or Telugu output ending
 # in a danda would otherwise count as a different word from the same word
 # without one, and score a spurious rewrite.
@@ -335,6 +408,9 @@ def stability_run(be: Backend, sentence: str, tgt: str, *, steps: int = 5) -> St
     return run
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Part 2 — time to first audio
+# ─────────────────────────────────────────────────────────────────────────────
 _tts = None
 
 
@@ -433,6 +509,7 @@ def warm_tts() -> str | None:
         return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Prefix stability and time-to-first-audio for direct vs pivoted translation."

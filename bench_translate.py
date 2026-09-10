@@ -25,6 +25,8 @@ Usage:  python bench_translate.py            # full run, ~2 min, a few cents
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -160,6 +162,12 @@ _FULL = (
 LANG = {"te": "Telugu", "ta": "Tamil", "en": "English"}
 
 
+# Indic sentence terminators as well as ASCII: a Tamil or Telugu output ending
+# in a danda would otherwise count as a different word from the same word
+# without one, and score a spurious rewrite.
+_PUNCT = ".,!?;:।॥\"'“”‘’()"
+
+
 def prefix_overlap(prev: str, curr: str) -> float:
     """Fraction of the previous output that survives as a prefix of the new one.
 
@@ -172,40 +180,83 @@ def prefix_overlap(prev: str, curr: str) -> float:
     p, c = prev.split(), curr.split()
     kept = 0
     for a, b in zip(p, c):
-        if a.strip(".,!?").lower() != b.strip(".,!?").lower():
+        if a.strip(_PUNCT).lower() != b.strip(_PUNCT).lower():
             break
         kept += 1
     return kept / len(p)
 
 
-def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> tuple[float, list[str], int]:
+def _is_degenerate(out: str) -> bool:
+    """Nothing came back, or the model emitted a dangling fragment ending
+    mid-word or mid-clause. Neither is a translation you could speak."""
+    return not out or out.rstrip().endswith(("-", "‑", ",", "،"))
+
+
+def _cut_points(n_words: int, steps: int) -> list[int]:
+    """Word counts at which to interrupt the speaker.
+
+    Starts at 40% — below that there is nothing committable in any language pair
+    and the number just measures the model refusing to guess. Deduplicated,
+    because on a short sentence two fractions round to the same cut and feeding
+    the identical fragment twice scores a free 1.0 that measures nothing but
+    determinism.
+    """
+    if steps < 2:
+        return [max(2, int(n_words * 0.4))]
+    fracs = [0.4 + 0.6 * i / (steps - 1) for i in range(steps)]
+    cuts = sorted({min(n_words, max(2, int(n_words * f))) for f in fracs})
+    return cuts
+
+
+@dataclass
+class StabilityRun:
+    target: str
+    mean: float
+    scores: list[float] = field(default_factory=list)
+    steps: list[dict] = field(default_factory=list)
+    degenerate: int = 0
+    n_cuts: int = 0
+    error: str | None = None
+
+
+def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
     """Feed growing prefixes; report mean prefix stability across steps."""
     words = sentence.split()
-    # Start at 40% — below that there is nothing committable in any language pair
-    # and the number just measures the model refusing to guess.
-    cuts = [max(2, int(len(words) * f)) for f in
-            [0.4 + 0.6 * i / (steps - 1) for i in range(steps)]]
+    cuts = _cut_points(len(words), steps)
+    run = StabilityRun(target=tgt, mean=0.0, n_cuts=len(cuts))
 
-    outs: list[str] = []
-    scores: list[float] = []
-    bad = 0
-    prev = ""
+    # The last output we could actually have spoken. A degenerate step does NOT
+    # reset this: the question a listener cares about is whether the words
+    # already in their ear survived, and they survive or not across the gap. The
+    # previous version reset it to the empty output, which quietly dropped the
+    # comparison and shrank the sample for whichever route failed more often —
+    # rewarding unreliability.
+    last_good = ""
     for n in cuts:
         frag = " ".join(words[:n])
         sysmsg = _INCREMENTAL.format(src=LANG["te"], tgt=LANG[tgt])
-        out, _ = _chat(sysmsg, frag)
-        # Degenerate: nothing came back, or the model emitted a dangling fragment
-        # ending mid-word. Neither is a translation you could speak.
-        if not out or out.rstrip().endswith(("-", "‑", ",")):
-            bad += 1
-            outs.append(f"[{n}/{len(words)}w] <<DEGENERATE>> {out!r}")
-            prev = out
+        try:
+            out, dt = _chat(sysmsg, frag)
+        except CallFailed as e:
+            run.error = str(e)
+            run.steps.append({"words": n, "of": len(words), "error": str(e)})
             continue
-        if prev:
-            scores.append(prefix_overlap(prev, out))
-        outs.append(f"[{n}/{len(words)}w] {out}")
-        prev = out
-    return (statistics.mean(scores) if scores else 0.0), outs, bad
+
+        rec: dict = {"words": n, "of": len(words), "out": out, "latency_s": round(dt, 3)}
+        if _is_degenerate(out):
+            run.degenerate += 1
+            rec["degenerate"] = True
+            run.steps.append(rec)
+            continue
+        if last_good:
+            score = prefix_overlap(last_good, out)
+            run.scores.append(score)
+            rec["stability"] = round(score, 3)
+        run.steps.append(rec)
+        last_good = out
+
+    run.mean = statistics.mean(run.scores) if run.scores else 0.0
+    return run
 
 
 def synth(text: str, lang: str) -> float:
@@ -252,26 +303,38 @@ def main() -> int:
 
     direct, pivot = [], []
     bad_direct = bad_pivot = 0
+    cuts_direct = cuts_pivot = 0
     for i, s in enumerate(SENTENCES, 1):
-        d, d_outs, d_bad = stability_run(s, "ta")
-        p, p_outs, p_bad = stability_run(s, "en")
-        bad_direct += d_bad
-        bad_pivot += p_bad
-        direct.append(d)
-        pivot.append(p)
+        d = stability_run(s, "ta")
+        p = stability_run(s, "en")
+        bad_direct += d.degenerate
+        bad_pivot += p.degenerate
+        cuts_direct += d.n_cuts
+        cuts_pivot += p.n_cuts
+        direct.append(d.mean)
+        pivot.append(p.mean)
+
         print(f"\n[{i}] {s}")
-        print(f"    te→ta (direct, SOV→SOV): {d:.0%}")
-        for o in d_outs:
-            print(f"        {o}")
-        print(f"    te→en (pivot,  SOV→SVO): {p:.0%}")
-        for o in p_outs:
-            print(f"        {o}")
+        for label, run in (("te→ta (direct, SOV→SOV)", d), ("te→en (pivot,  SOV→SVO)", p)):
+            print(f"    {label}: {run.mean:.0%}"
+                  f"  (scored {len(run.scores)}/{max(run.n_cuts - 1, 0)} transitions"
+                  f"{f', {run.degenerate} degenerate' if run.degenerate else ''})")
+            for st in run.steps:
+                tag = f"[{st['words']}/{st['of']}w]"
+                if "error" in st:
+                    print(f"        {tag} <<CALL FAILED>> {st['error']}")
+                elif st.get("degenerate"):
+                    print(f"        {tag} <<DEGENERATE>> {st['out']!r}")
+                else:
+                    sc = st.get("stability")
+                    print(f"        {tag} {st['out']}"
+                          + (f"   ({sc:.0%} kept)" if sc is not None else ""))
 
     md, mp = statistics.mean(direct), statistics.mean(pivot)
     print("\n" + "-" * 72)
-    n_steps = len(SENTENCES) * 5
     print(f"  MEAN STABILITY   te→ta {md:.0%}   |   te→en {mp:.0%}")
-    print(f"  DEGENERATE OUT   te→ta {bad_direct}/{n_steps}  |   te→en {bad_pivot}/{n_steps}")
+    print(f"  DEGENERATE OUT   te→ta {bad_direct}/{cuts_direct}"
+          f"  |   te→en {bad_pivot}/{cuts_pivot}")
     print(f"  n = {len(SENTENCES)} sentences — small. Treat as a signal, not a result.")
     print("-" * 72)
 

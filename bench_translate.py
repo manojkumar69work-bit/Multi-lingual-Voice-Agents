@@ -259,14 +259,27 @@ def stability_run(sentence: str, tgt: str, *, steps: int = 5) -> StabilityRun:
     return run
 
 
-def synth(text: str, lang: str) -> float:
-    """Time to get audio bytes back from Sarvam. Returns seconds."""
+_tts = None
+
+
+def _tts_engine():
+    """The module-level synthesizer, built once.
+
+    tts_engine constructs its own singleton at import, so the previous version's
+    per-call `TTSSynthesizer()` was building a third and fourth copy of every
+    provider — including MMS, which loads a model — for each of 90 measurements.
+    """
+    global _tts
+    if _tts is not None:
+        return _tts
     import tts_engine
 
-    # Sarvam Bulbul v3 covers Tamil, but this project only ever configured hi/te/en,
-    # so ta falls through to the Hindi profile and would be spoken by a Hindi voice.
-    # Injected here rather than committed to DEFAULT_VOICES because which speaker
-    # sounds right in Tamil is a listening call, not a spec — audition before shipping.
+    # Sarvam Bulbul v3 covers Tamil, but this project only ever configured
+    # hi/te/en, so ta falls through to the Hindi profile and would be spoken by a
+    # Hindi voice. Injected here rather than committed to DEFAULT_VOICES because
+    # which speaker sounds right in Tamil is a listening call, not a spec —
+    # audition before shipping. DEFAULT_VOICES is read at synthesis time, so
+    # patching the imported module is enough for its singleton to see this.
     if "ta" not in tts_engine.DEFAULT_VOICES:
         tts_engine.DEFAULT_VOICES["ta"] = tts_engine.VoiceProfile(
             language="ta",
@@ -275,14 +288,55 @@ def synth(text: str, lang: str) -> float:
             edge_voice="ta-IN-PallaviNeural",
             quality_tier=99,  # unaudited
         )
+    _tts = tts_engine.synthesizer
+    return _tts
 
-    synthesizer = tts_engine.TTSSynthesizer()
-    t0 = time.perf_counter()
-    audio = synthesizer.synthesize(text, lang)
-    dt = time.perf_counter() - t0
-    if not audio:
-        raise RuntimeError(f"no audio returned for {lang}")
-    return dt
+
+def timed_synth(text: str, lang: str) -> tuple[float, str, int]:
+    """Time to get audio bytes back. Returns (seconds, provider, n_bytes).
+
+    synthesize() returns (wav, provider) — a tuple, which is truthy even when
+    the bytes are empty, so the old `if not audio` check could never fire and a
+    silent result would have been recorded as a fast one. The provider name
+    comes back with the timing because TTSSynthesizer falls through
+    Sarvam → Edge → MMS on failure, and a row timed against a different
+    provider than its neighbours is not comparable to them.
+    """
+    last = ""
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        # Paced OUTSIDE the timed region. Part 2 fires three syntheses per
+        # sentence back to back; unpaced, Sarvam starts refusing them and the
+        # row is lost to our own burst rather than to anything about the route.
+        time.sleep(PACE_SLEEP)
+        t0 = time.perf_counter()
+        try:
+            wav, provider = _tts_engine().synthesize(text, lang, preferred="sarvam")
+            dt = time.perf_counter() - t0
+        except Exception as e:  # noqa: BLE001 — provider chain raises bare RuntimeError
+            last = f"{type(e).__name__}: {e}"
+        else:
+            if wav:
+                return dt, provider, len(wav)
+            last = f"no audio returned for {lang}"
+        # A retry gets a fresh clock. Folding the failed attempt's wall time into
+        # the measurement would report our retry policy as the model's latency.
+        time.sleep(min(2 ** attempt, 20))
+    raise RuntimeError(last)
+
+
+def warm_tts() -> str | None:
+    """One throwaway synthesis before the clock matters.
+
+    Without it the first measured row absorbs client construction, TLS handshake
+    and — if MMS is in the chain — a model load, and reads as a latency finding
+    about sentence 1 rather than a cold start.
+    """
+    try:
+        _, provider, _ = timed_synth("சரி", "ta")
+        return provider
+    except Exception as e:  # noqa: BLE001 — a warm-up failure is not a run failure
+        print(f"  (TTS warm-up failed: {e})")
+        return None
 
 
 def main() -> int:
@@ -343,6 +397,10 @@ def main() -> int:
         print("\n" + "=" * 72)
         print("PART 2  Time to first audio, measured from START of the utterance")
         print("=" * 72)
+        warm = warm_tts()
+        if warm:
+            print(f"  (TTS warmed; provider={warm})")
+        providers: set[str] = set()
 
         rows = []
         for s in SENTENCES:
@@ -353,12 +411,12 @@ def main() -> int:
             # until the speaker stops, then you pay two LLM hops plus TTS.
             en, t_en = _chat(_FULL.format(src="Telugu", tgt="English"), s)
             ta_via_en, t_pivot = _chat(_FULL.format(src="English", tgt="Tamil"), en)
-            t_tts_a = synth(ta_via_en, "ta")
+            t_tts_a, prov_a, _ = timed_synth(ta_via_en, "ta")
             a = speak_time + t_en + t_pivot + t_tts_a
 
             # Route B — direct, consecutive. One hop instead of two.
             ta_direct, t_dir = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
-            t_tts_b = synth(ta_direct, "ta")
+            t_tts_b, prov_b, _ = timed_synth(ta_direct, "ta")
             b = speak_time + t_dir + t_tts_b
 
             # Route C — direct, incremental. Translate at 60% of the utterance and
@@ -367,9 +425,10 @@ def main() -> int:
             partial = " ".join(words[:cut])
             head, t_head = _chat(
                 _INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
-            t_tts_c = synth(head, "ta") if head else 0.0
+            t_tts_c, prov_c, _ = timed_synth(head, "ta") if head else (0.0, None, 0)
             c = (cut / WORDS_PER_SEC) + t_head + t_tts_c
 
+            providers.update(p for p in (prov_a, prov_b, prov_c) if p)
             rows.append((a, b, c))
             print(f"\n  {s[:50]}...")
             print(f"    A pivot consecutive   {a:6.2f}s "
@@ -385,6 +444,9 @@ def main() -> int:
         print("\n" + "-" * 72)
         print(f"  MEAN TTFA   A pivot {ma:.2f}s   B direct {mb:.2f}s   C incremental {mc:.2f}s")
         print(f"  C saves {ma - mc:.2f}s vs the route every shipping product uses")
+        if len(providers) > 1:
+            print(f"  ⚠  mixed TTS providers across rows ({sorted(providers)}) — "
+                  "timings are not comparable")
         print("-" * 72)
 
     # ── Verdict ──────────────────────────────────────────────────────────────

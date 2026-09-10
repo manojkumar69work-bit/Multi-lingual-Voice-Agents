@@ -471,6 +471,8 @@ def main() -> int:
     }
 
     # ── Part 2: time to first audio ──────────────────────────────────────────
+    ma = mb = mc = None
+    save_ab = save_ac = None
     if not args.no_tts:
         print("\n" + "=" * 72)
         print("PART 2  Time to first audio, measured from START of the utterance")
@@ -480,55 +482,127 @@ def main() -> int:
             print(f"  (TTS warmed; provider={warm})")
         providers: set[str] = set()
 
-        rows = []
+        rows: list[dict] = []
         for s in corpus:
             words = s.split()
             speak_time = len(words) / WORDS_PER_SEC
+            row: dict = {"sentence": s, "speak_s": speak_time,
+                         "a": None, "b": None, "c": None, "errors": {}}
+            print(f"\n  {s[:50]}...")
 
-            # Route A — pivot, consecutive. What Samsung/Jio ship. You cannot start
-            # until the speaker stops, then you pay two LLM hops plus TTS.
-            t1 = _chat(_FULL.format(src="Telugu", tgt="English"), s)
-            _guard(t1, "te→en")
-            t2 = _chat(_FULL.format(src="English", tgt="Tamil"), t1.text)
-            _guard(t2, "en→ta")
-            t_tts_a, prov_a, _ = timed_synth(t2.text, "ta")
-            a = speak_time + t1.seconds + t2.seconds + t_tts_a
+            # Each route is measured independently. Wrapping the whole sentence
+            # in one try — as the first version of this did — meant a single
+            # flaky TTS call threw away the two routes that had already
+            # succeeded, and a run that loses rows unevenly across routes is
+            # comparing different sentences to each other.
+
+            # Route A — pivot, consecutive. What Samsung/Jio ship. You cannot
+            # start until the speaker stops, then you pay two hops plus TTS.
+            try:
+                t1 = _chat(_FULL.format(src="Telugu", tgt="English"), s)
+                _guard(t1, "te→en")
+                t2 = _chat(_FULL.format(src="English", tgt="Tamil"), t1.text)
+                _guard(t2, "en→ta")
+                mt = t1.seconds + t2.seconds
+                t_tts, prov, _ = timed_synth(t2.text, "ta")
+                row["a"] = speak_time + mt + t_tts
+                providers.add(prov)
+                print(f"    A pivot consecutive   {row['a']:6.2f}s "
+                      f"(speak {speak_time:.1f} + mt {mt:.2f} + tts {t_tts:.2f})")
+            except (CallFailed, RuntimeError) as e:
+                row["errors"]["a"] = str(e)
+                print(f"    A pivot consecutive      n/a  ({e})")
 
             # Route B — direct, consecutive. One hop instead of two.
-            t3 = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
-            _guard(t3, "te→ta")
-            t_tts_b, prov_b, _ = timed_synth(t3.text, "ta")
-            b = speak_time + t3.seconds + t_tts_b
+            try:
+                t1 = _chat(_FULL.format(src="Telugu", tgt="Tamil"), s)
+                _guard(t1, "te→ta")
+                t_tts, prov, _ = timed_synth(t1.text, "ta")
+                row["b"] = speak_time + t1.seconds + t_tts
+                providers.add(prov)
+                print(f"    B direct consecutive  {row['b']:6.2f}s "
+                      f"(speak {speak_time:.1f} + mt {t1.seconds:.2f} + tts {t_tts:.2f})")
+            except (CallFailed, RuntimeError) as e:
+                row["errors"]["b"] = str(e)
+                print(f"    B direct consecutive     n/a  ({e})")
 
-            # Route C — direct, incremental. Translate at 60% of the utterance and
-            # start speaking then. Only legitimate if Part 1 says the prefix holds.
+            # Route C — direct, incremental. Translate at 60% of the utterance
+            # and start speaking then. Only a legitimate number if Part 1 says
+            # the prefix holds; the verdict below refuses to credit it otherwise.
             cut = max(2, int(len(words) * 0.6))
-            partial = " ".join(words[:cut])
-            head = _chat(_INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
-            _guard(head, "te→ta partial")
-            t_tts_c, prov_c, _ = timed_synth(head.text, "ta")
-            c = (cut / WORDS_PER_SEC) + head.seconds + t_tts_c
+            try:
+                partial = " ".join(words[:cut])
+                head = _chat(_INCREMENTAL.format(src="Telugu", tgt="Tamil"), partial)
+                _guard(head, "te→ta partial")
+                if _is_degenerate(head.text):
+                    # No audio to play means no time to first audio. Scoring this
+                    # as speak+mt+0 would credit the route for having failed.
+                    row["errors"]["c"] = f"degenerate partial: {head.text!r}"
+                    print(f"    C direct incremental     n/a  "
+                          f"(degenerate partial: {head.text!r})")
+                else:
+                    t_tts, prov, _ = timed_synth(head.text, "ta")
+                    row["c"] = (cut / WORDS_PER_SEC) + head.seconds + t_tts
+                    providers.add(prov)
+                    print(f"    C direct incremental  {row['c']:6.2f}s "
+                          f"(speak {cut / WORDS_PER_SEC:.1f} + mt {head.seconds:.2f} "
+                          f"+ tts {t_tts:.2f})")
+            except (CallFailed, RuntimeError) as e:
+                row["errors"]["c"] = str(e)
+                print(f"    C direct incremental     n/a  ({e})")
 
-            providers.update(p for p in (prov_a, prov_b, prov_c) if p)
-            rows.append((a, b, c))
-            print(f"\n  {s[:50]}...")
-            print(f"    A pivot consecutive   {a:6.2f}s "
-                  f"(speak {speak_time:.1f} + mt {t1.seconds + t2.seconds:.2f} + tts {t_tts_a:.2f})")
-            print(f"    B direct consecutive  {b:6.2f}s "
-                  f"(speak {speak_time:.1f} + mt {t3.seconds:.2f} + tts {t_tts_b:.2f})")
-            print(f"    C direct incremental  {c:6.2f}s "
-                  f"(speak {cut / WORDS_PER_SEC:.1f} + mt {head.seconds:.2f} + tts {t_tts_c:.2f})")
+            rows.append(row)
 
-        ma = statistics.mean(r[0] for r in rows)
-        mb = statistics.mean(r[1] for r in rows)
-        mc = statistics.mean(r[2] for r in rows)
-        print("\n" + "-" * 72)
-        print(f"  MEAN TTFA   A pivot {ma:.2f}s   B direct {mb:.2f}s   C incremental {mc:.2f}s")
-        print(f"  C saves {ma - mc:.2f}s vs the route every shipping product uses")
-        if len(providers) > 1:
-            print(f"  ⚠  mixed TTS providers across rows ({sorted(providers)}) — "
-                  "timings are not comparable")
-        print("-" * 72)
+        got_a = [r["a"] for r in rows if r["a"] is not None]
+        got_b = [r["b"] for r in rows if r["b"] is not None]
+        got_c = [r["c"] for r in rows if r["c"] is not None]
+        if got_a or got_b:
+            ma = statistics.mean(got_a) if got_a else None
+            mb = statistics.mean(got_b) if got_b else None
+            mc = statistics.mean(got_c) if got_c else None
+
+            # Savings are computed PAIRED — only over sentences where both
+            # routes produced audio. Differencing two means taken over
+            # different sentence sets is an artefact of which calls happened to
+            # fail, not a latency finding.
+            pair_ab = [(r["a"], r["b"]) for r in rows
+                       if r["a"] is not None and r["b"] is not None]
+            pair_ac = [(r["a"], r["c"]) for r in rows
+                       if r["a"] is not None and r["c"] is not None]
+            save_ab = statistics.mean(a - b for a, b in pair_ab) if pair_ab else None
+            save_ac = statistics.mean(a - c for a, c in pair_ac) if pair_ac else None
+
+            def _s(x: float | None) -> str:
+                return "n/a" if x is None else f"{x:.2f}s"
+
+            print("\n" + "-" * 72)
+            print(f"  MEAN TTFA   A pivot {_s(ma)} (n={len(got_a)})   "
+                  f"B direct {_s(mb)} (n={len(got_b)})   "
+                  f"C incremental {_s(mc)} (n={len(got_c)})")
+            if save_ab is not None:
+                print(f"  B saves {save_ab:.2f}s just by dropping the English hop"
+                      f"  (paired, n={len(pair_ab)})")
+            if save_ac is not None:
+                print(f"  C saves {save_ac:.2f}s vs the route every shipping product uses"
+                      f"  (paired, n={len(pair_ac)} of {len(rows)} sentences)")
+            if len(got_c) < len(rows):
+                print(f"  ⚠  Route C produced no speakable audio on "
+                      f"{len(rows) - len(got_c)}/{len(rows)} sentences — a route that")
+                print("     stays silent is not a fast route.")
+            if len(providers) > 1:
+                print(f"  ⚠  mixed TTS providers across rows ({sorted(providers)}) — "
+                      "timings are not comparable")
+            print("-" * 72)
+            results["part2"] = {
+                "mean_ttfa_pivot": ma, "mean_ttfa_direct": mb,
+                "mean_ttfa_incremental": mc,
+                "paired_saving_direct_vs_pivot": save_ab,
+                "paired_saving_incremental_vs_pivot": save_ac,
+                "n_a": len(got_a), "n_b": len(got_b), "n_c": len(got_c),
+                "n_sentences": len(rows),
+                "tts_providers": sorted(providers),
+                "rows": rows,
+            }
 
     # ── Verdict ──────────────────────────────────────────────────────────────
     # Two separate questions, and conflating them is how you ship a bad product:

@@ -3,176 +3,251 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>My Calls · MEA Voice Agent</title>
+  <title>Your calls · MEA Voice Agent</title>
   <link rel="stylesheet" href="/static/app.css" />
-  <style>
-    .modal.transcript-modal { width: 600px; display: flex; flex-direction: column; max-height: 80vh; }
-  </style>
+  <script src="/static/portal.js"></script>
 </head>
 <body>
-<div class="container">
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">M</div>
-      <div>
-        <h1>My Calls</h1>
-        <div class="sub" id="who"></div>
-      </div>
-    </div>
-    <div class="top-actions">
-      <button class="btn ghost" onclick="exportCsv()">Export leads CSV</button>
-      <button class="btn ghost" onclick="load()">Refresh</button>
-      <button class="btn ghost" onclick="logout()">Sign out</button>
-    </div>
-  </header>
-
-  <div class="stat-grid c4">
-    <div class="stat-card"><div class="num" id="sCalls">0</div><div class="label">Total calls</div></div>
-    <div class="stat-card is-amber"><div class="num" id="sActive">0</div><div class="label">Active now</div></div>
-    <div class="stat-card is-blue">
-      <div class="num" id="sMinutes">0</div><div class="label" id="minLabel">Minutes this month</div>
-      <div class="quota-bar" id="quotaWrap" style="display:none"><div id="quotaFill" style="width:0%"></div></div>
-    </div>
-    <div class="stat-card is-violet"><div class="num" id="sLeads">0</div><div class="label">Leads captured</div></div>
-  </div>
-
-  <div class="section">
-    <div class="section-head"><h2>Active calls</h2><span class="count" id="activeCount"></span></div>
-    <div id="activeList"><div class="empty">No active calls</div></div>
-  </div>
-
-  <div class="section">
-    <div class="section-head"><h2>Call history</h2><span class="count" id="histCount"></span></div>
-    <div id="historyList"><div class="empty">No completed calls yet</div></div>
-  </div>
+<div class="topbar-m">
+  <span class="mark"><span class="mark-glyph" data-glyph></span><span class="mark-name">MEA Voice</span></span>
+  <button class="btn ghost icon" id="railBtn" aria-label="Open menu" data-icon="menu"></button>
 </div>
 
-<div class="overlay" id="overlay">
-  <div class="modal transcript-modal">
-    <div class="modal-head"><h3>Transcript</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div class="modal-body" id="transcriptBody"></div>
-  </div>
+<div class="shell">
+  <aside class="rail">
+    <span class="mark"><span class="mark-glyph" data-glyph></span><span><span class="mark-name">MEA Voice</span><br><span class="mark-sub">Client portal</span></span></span>
+    <nav class="nav" aria-label="Sections">
+      <button data-view="overview" data-icon="home">Overview</button>
+      <button data-view="calls" data-icon="calls">Calls <span class="n" id="nCalls"></span></button>
+      <button data-view="leads" data-icon="leads">Leads <span class="n" id="nLeads"></span></button>
+      <button data-view="delivery" data-icon="send">Lead delivery <span class="n" id="nDeliv"></span></button>
+    </nav>
+    <div class="rail-foot">
+      <div class="who"><b id="whoName">—</b><span id="whoId"></span></div>
+      <div class="row">
+        <button class="btn ghost sm" id="themeBtn" aria-label="Toggle theme"></button>
+        <button class="btn ghost sm" data-icon="out" onclick="P.logout()">Sign out</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ═══ Overview ═══ -->
+    <section class="view" id="v-overview">
+      <div class="page-head">
+        <div><h1 id="hello">Your calls</h1><p id="helloSub">Everything your agent heard, and every lead it caught.</p></div>
+        <div class="actions"><span class="stamp" id="stamp"></span></div>
+      </div>
+
+      <div class="ledger" id="ledger">
+        <div><div class="v" id="kLeads">–</div><div class="k">Leads captured</div></div>
+        <div><div class="v" id="kCalls">–</div><div class="k">Calls answered</div></div>
+        <div><div class="v" id="kRate">–</div><div class="k">Calls that became a lead</div></div>
+        <div><div class="v" id="kMin">–</div><div class="k" id="kMinLabel">Minutes this month</div><div class="quota" id="quota" hidden><i></i></div></div>
+        <div><div class="v" id="kLive">–</div><div class="k">On the line now</div></div>
+      </div>
+
+      <div id="liveBlock" hidden>
+        <h2 class="sec"><span class="dot-live">Live</span> Calls in progress</h2>
+        <div class="panel" id="liveList"></div>
+      </div>
+
+      <div class="two">
+        <div class="panel pad">
+          <div class="panel-title"><h3>Calls per day</h3><span>Last 14 days · hover a day for detail</span></div>
+          <div class="chart" id="chart"></div>
+        </div>
+        <div class="panel pad">
+          <div class="panel-title"><h3>Newest leads</h3><a href="#leads" class="muted" style="font-size:13px">See all</a></div>
+          <div id="freshLeads"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ Calls ═══ -->
+    <section class="view" id="v-calls">
+      <div class="page-head">
+        <div><h1>Calls</h1><p>Pick a call to read what was said, hear it, and see what the agent captured.</p></div>
+        <div class="key"><span style="--c:var(--caller)">Caller</span><span style="--c:var(--agent)">Agent</span></div>
+      </div>
+      <div class="toolbar">
+        <label class="search grow"><span class="sr-only">Search calls</span>
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input id="q" type="search" placeholder="Search names, numbers, or anything said on a call" />
+        </label>
+        <div class="seg" role="group" aria-label="Filter calls" id="filter">
+          <button aria-pressed="true" data-f="all">All</button>
+          <button aria-pressed="false" data-f="lead">With a lead</button>
+          <button aria-pressed="false" data-f="nolead">No lead</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="panel call-list" id="callList" role="listbox" aria-label="Calls"></div>
+        <div class="panel detail" id="detail"><div class="empty"><b>No call selected</b>Choose one from the list.</div></div>
+      </div>
+    </section>
+
+    <!-- ═══ Leads ═══ -->
+    <section class="view" id="v-leads">
+      <div class="page-head">
+        <div><h1>Leads</h1><p>Callers who left enough detail to follow up. Newest first.</p></div>
+        <div class="actions"><button class="btn" data-icon="down" onclick="P.leadsCSV(CALLS, 'leads.csv')">Export CSV</button></div>
+      </div>
+      <div class="panel table-wrap"><table class="t" id="leadTable"></table></div>
+    </section>
+
+    <!-- ═══ Delivery ═══ -->
+    <section class="view" id="v-delivery">
+      <div class="page-head">
+        <div><h1>Lead delivery</h1><p>Whether each lead reached your Google Sheet, WhatsApp or CRM. Failed sends are retried automatically; if one gives up, tell your account manager and they can send it again.</p></div>
+      </div>
+      <div class="ledger" style="max-width:560px">
+        <div><div class="v" id="dOk">–</div><div class="k">Delivered</div></div>
+        <div><div class="v" id="dPend">–</div><div class="k">Waiting to retry</div></div>
+        <div><div class="v" id="dDead">–</div><div class="k">Gave up</div></div>
+      </div>
+      <h2 class="sec">Recent sends</h2>
+      <div class="panel table-wrap"><table class="t" id="delivTable"></table></div>
+    </section>
+  </main>
 </div>
 
 <script>
-let CALLS = [];
+let CALLS = [], ACTIVE = [], DELIV = [], ME = null;
+let selected = null, filter = 'all', query = '';
 
-async function guard() {
-  const r = await fetch('/api/auth/me');
-  if (!r.ok) { location.href = '/login'; return false; }
-  const u = await r.json();
-  if (u.role !== 'client') { location.href = '/admin'; return false; }
-  document.getElementById('who').textContent = u.name || u.client_id;
-  return true;
-}
-async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-function fmtMin(m) { return (m || 0).toFixed(1); }
+const $ = (id) => document.getElementById(id);
 
 async function load() {
-  const [stats, calls] = await Promise.all([
-    fetch('/api/client/stats').then(r => r.json()),
-    fetch('/api/client/calls').then(r => r.json()),
+  const [stats, calls, deliv] = await Promise.all([
+    P.api('/api/client/stats'),
+    P.api('/api/client/calls'),
+    P.api('/api/client/deliveries').catch(() => ({ deliveries: [], stats: {} })),
   ]);
+  ACTIVE = calls.active || [];
+  CALLS = [...ACTIVE, ...(calls.recent || [])];
+  DELIV = deliv.deliveries || [];
+  renderOverview(stats);
+  renderCalls();
+  renderLeads();
+  renderDelivery(deliv.stats || {});
+  $('stamp').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
 
-  document.getElementById('sCalls').textContent = stats.calls || 0;
-  document.getElementById('sActive').textContent = stats.active || 0;
-  document.getElementById('sMinutes').textContent = fmtMin(stats.month_minutes);
-  document.getElementById('sLeads').textContent = stats.lead_count || 0;
-
-  if (stats.minute_quota && stats.minute_quota > 0) {
-    document.getElementById('quotaWrap').style.display = 'block';
-    const pct = Math.min(100, (stats.month_minutes / stats.minute_quota) * 100);
-    document.getElementById('quotaFill').style.width = pct + '%';
-    document.getElementById('minLabel').textContent = `Minutes this month · ${fmtMin(stats.month_minutes)} / ${stats.minute_quota}`;
+function renderOverview(s) {
+  const leads = CALLS.filter(P.hasLead);
+  $('hello').textContent = s.name || ME.name || 'Your calls';
+  $('kLeads').textContent = P.num(s.lead_count);
+  $('kCalls').textContent = P.num(s.calls);
+  $('kRate').innerHTML = CALLS.length ? Math.round(leads.length / CALLS.length * 100) + '<small>%</small>' : '–';
+  $('kLive').textContent = s.active || 0;
+  $('kLive').classList.toggle('live-v', !!s.active);
+  $('kMin').innerHTML = P.mins(s.month_minutes) + (s.minute_quota ? `<small>/ ${P.num(s.minute_quota)}</small>` : '');
+  if (s.minute_quota) {
+    const pct = Math.min(100, (s.month_minutes / s.minute_quota) * 100);
+    $('quota').hidden = false;
+    $('quota').className = 'quota' + (pct >= 100 ? ' over' : pct >= 80 ? ' hot' : '');
+    $('quota').firstElementChild.style.width = pct + '%';
+    $('kMinLabel').textContent = pct >= 100 ? 'Monthly minutes used up' : `Minutes this month · ${Math.round(pct)}% of plan`;
   }
+  $('nCalls').textContent = CALLS.length || '';
+  $('nLeads').textContent = leads.length || '';
+  $('nLeads').className = 'n';
+  $('nCalls').className = 'n' + (ACTIVE.length ? ' live' : '');
+  if (ACTIVE.length) $('nCalls').textContent = `${ACTIVE.length} live`;
 
-  const active = calls.active || [];
-  const history = calls.recent || [];
-  CALLS = [...active, ...history];
+  $('liveBlock').hidden = !ACTIVE.length;
+  $('liveList').innerHTML = ACTIVE.map(itemHTML).join('');
+  bindItems($('liveList'));
 
-  document.getElementById('activeCount').textContent = active.length ? `(${active.length})` : '';
-  document.getElementById('histCount').textContent = history.length ? `(${history.length})` : '';
+  P.barChart($('chart'), P.perDay(CALLS, 14));
 
-  document.getElementById('activeList').innerHTML = active.length
-    ? active.map(c => renderCall(c, true)).join('')
-    : '<div class="empty">No active calls</div>';
-  document.getElementById('historyList').innerHTML = history.length
-    ? history.map(c => renderCall(c, false)).join('')
-    : '<div class="empty">No completed calls yet</div>';
+  const fresh = leads.slice(0, 5);
+  $('freshLeads').innerHTML = fresh.length ? `<div class="call-list" style="max-height:none;margin:0 -20px -18px">${fresh.map(itemHTML).join('')}</div>`
+    : '<div class="empty"><b>No leads yet</b>When a caller shares their name and number, they show up here.</div>';
+  bindItems($('freshLeads'));
 }
 
-function renderCall(c, live) {
-  const ld = c.lead_data || {};
-  const chips = Object.entries(ld).filter(([k, v]) => v && k !== 'notes').map(([k, v]) => {
-    const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    return `<span class="chip"><b>${label}:</b> ${esc(v)}</span>`;
-  }).join('');
-  const when = c.created_at ? new Date(c.created_at).toLocaleString() : '—';
-  const dur = Math.round(c.duration_seconds || 0);
-  const badge = live
-    ? '<span class="badge active"><span class="dot live"></span>In progress</span>'
-    : '<span class="badge completed">Completed</span>' + (c.lead_submitted ? ' <span class="badge sent">Lead sent</span>' : '');
-  const audio = (!live && c.recording_path)
-    ? `<audio controls preload="none" src="/api/recordings/${encodeURIComponent(c.session_id)}"></audio>` : '';
-  const transcriptBtn = (c.transcript && c.transcript.length)
-    ? `<button class="btn ghost sm" onclick="openTranscript('${c.session_id}')">View transcript</button>` : '';
-  return `<div class="call-card ${live ? 'live' : ''}">
-    <div class="call-head">
-      <div class="meta">${when} · ${dur}s</div>
-      <div class="status-row">${badge}</div>
-    </div>
-    ${c.summary ? `<div class="summary">${esc(c.summary)}</div>` : (live ? '' : '<div class="summary empty-note">No summary.</div>')}
-    ${chips ? `<div class="lead-chips">${chips}</div>` : ''}
-    ${audio}
-    ${transcriptBtn ? `<div class="call-actions">${transcriptBtn}</div>` : ''}
-  </div>`;
+function matches(c) {
+  if (filter === 'lead' && !P.hasLead(c)) return false;
+  if (filter === 'nolead' && P.hasLead(c)) return false;
+  if (!query) return true;
+  const hay = [JSON.stringify(P.leadOf(c)), c.summary, c.caller_phone, ...(c.transcript || []).map(m => m.content)].join(' ').toLowerCase();
+  return hay.includes(query);
 }
 
-async function openTranscript(sessionId) {
-  const c = CALLS.find(x => x.session_id === sessionId);
-  let transcript = c && c.transcript;
-  if (!transcript) {
-    const d = await fetch('/api/client/calls/' + encodeURIComponent(sessionId)).then(r => r.json());
-    transcript = d.transcript || [];
-  }
-  const body = document.getElementById('transcriptBody');
-  body.innerHTML = (transcript || []).map(m => {
-    const role = m.role === 'user' ? 'user' : 'assistant';
-    const who = role === 'user' ? 'Caller' : 'Agent';
-    return `<div class="msg ${role}"><div class="role">${who}</div><div class="bubble">${esc(m.content)}</div></div>`;
-  }).join('') || '<div class="empty">No transcript.</div>';
-  document.getElementById('overlay').classList.add('show');
-}
-function closeModal() { document.getElementById('overlay').classList.remove('show'); }
-
-function exportCsv() {
-  const leads = CALLS.filter(c => c.lead_extracted && c.lead_data && Object.keys(c.lead_data).length);
-  if (!leads.length) { alert('No leads to export yet.'); return; }
-  // Collect all unique keys across all leads, preserving insertion order by first appearance
-  const allKeys = [];
-  const seen = new Set();
-  for (const c of leads) {
-    for (const k of Object.keys(c.lead_data || {})) {
-      if (!seen.has(k)) { seen.add(k); allKeys.push(k); }
-    }
-  }
-  const header = ['date', ...allKeys, 'duration_s', 'summary'];
-  const rows = leads.map(c => {
-    const ld = c.lead_data || {};
-    const vals = [c.created_at || '', ...allKeys.map(k => ld[k] || ''), Math.round(c.duration_seconds || 0), (c.summary || '').replace(/\n/g, ' ')];
-    return vals.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
-  });
-  const csv = [header.join(','), ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'leads.csv';
-  a.click();
+const itemHTML = (c) => P.callItem(c, selected);
+function bindItems(root) {
+  root.querySelectorAll('.call-item').forEach(b => b.addEventListener('click', () => { location.hash = 'calls/' + b.dataset.id; }));
 }
 
-(async () => { if (await guard()) load(); })();
-setInterval(() => { if (!document.getElementById('overlay').classList.contains('show')) load(); }, 5000);
+function renderCalls() {
+  const list = CALLS.filter(matches);
+  $('callList').innerHTML = list.length ? list.map(itemHTML).join('')
+    : CALLS.length ? '<div class="empty"><b>Nothing matches</b>Try a different search or filter.</div>'
+    : '<div class="empty"><b>No calls yet</b>Calls appear here the moment your agent picks up.</div>';
+  bindItems($('callList'));
+  if (selected) renderDetail(selected, true);
+}
+
+async function renderDetail(id, soft = false) {
+  selected = id;
+  document.querySelectorAll('.call-item').forEach(b => b.setAttribute('aria-selected', b.dataset.id === id));
+  let c = CALLS.find(x => x.session_id === id);
+  if (!c) { try { c = await P.api('/api/client/calls/' + encodeURIComponent(id)); } catch (_) {} }
+  P.renderDetail($('detail'), c, { deliveries: DELIV, soft });
+}
+
+function renderLeads() {
+  const leads = CALLS.filter(P.hasLead);
+  if (!leads.length) { $('leadTable').innerHTML = '<tbody><tr><td class="empty"><b>No leads yet</b>Leads appear once a caller shares a name and a way to reach them.</td></tr></tbody>'; return; }
+  const cols = ['name', 'phone', 'property_type', 'budget', 'location', 'timeline'];
+  const extra = [];
+  leads.forEach(c => Object.keys(P.leadOf(c)).forEach(k => { if (!cols.includes(k) && k !== 'notes' && !extra.includes(k)) extra.push(k); }));
+  const keys = [...cols.filter(k => leads.some(c => P.leadOf(c)[k])), ...extra];
+  $('leadTable').innerHTML = `<thead><tr>${keys.map(k => `<th>${P.esc(P.title(k))}</th>`).join('')}<th>Detail</th><th>When</th><th>Status</th></tr></thead>
+    <tbody>${leads.map(c => {
+      const ld = P.leadOf(c), cp = P.completeness(c, keys);
+      return `<tr class="click" data-id="${P.esc(c.session_id)}">${keys.map(k => `<td class="wrap">${ld[k] ? P.esc(ld[k]) : '<span class="muted">—</span>'}</td>`).join('')}
+        <td class="mono">${cp.got}/${cp.of}</td><td class="mono">${P.ago(c.created_at)}</td><td>${P.deliveryBadge(c, DELIV)}</td></tr>`;
+    }).join('')}</tbody>`;
+  $('leadTable').querySelectorAll('tr.click').forEach(r => r.addEventListener('click', () => { location.hash = 'calls/' + r.dataset.id; }));
+}
+
+function renderDelivery(s) {
+  $('dOk').textContent = P.num(s.delivered); $('dPend').textContent = P.num(s.pending); $('dDead').textContent = P.num(s.dead);
+  $('nDeliv').textContent = s.dead ? `${s.dead} failed` : '';
+  if (!DELIV.length) { $('delivTable').innerHTML = '<tbody><tr><td class="empty"><b>Nothing sent yet</b>Each lead is sent to your destinations as soon as it is captured.</td></tr></tbody>'; return; }
+  const st = { delivered: 'ok', pending: 'warn', dead: 'bad' };
+  const label = { delivered: 'Delivered', pending: 'Retrying', dead: 'Gave up' };
+  const ch = { sheets: 'Google Sheet', whatsapp: 'WhatsApp', webhook: 'CRM webhook' };
+  $('delivTable').innerHTML = `<thead><tr><th>Lead</th><th>Sent to</th><th>Status</th><th class="r">Tries</th><th>When</th></tr></thead>
+    <tbody>${DELIV.map(d => {
+      let lead = {}; try { lead = (JSON.parse(d.payload || '{}').lead) || {}; } catch (_) {}
+      return `<tr><td>${P.esc(lead.name || '—')}</td><td>${ch[d.channel] || P.esc(d.channel)}</td>
+        <td><span class="badge ${st[d.status] || ''}">${label[d.status] || P.esc(d.status)}</span></td>
+        <td class="r mono">${d.attempts}</td>
+        <td class="mono">${d.created_at ? P.ago(new Date(d.created_at * 1000).toISOString()) : '—'}</td></tr>`;
+    }).join('')}</tbody>`;
+}
+
+$('q').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); renderCalls(); });
+$('filter').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  filter = b.dataset.f;
+  $('filter').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  renderCalls();
+});
+
+(async () => {
+  P.mountChrome();
+  ME = await P.guard('client'); if (!ME) return;
+  $('whoName').textContent = ME.name || ME.client_id;
+  $('whoId').textContent = ME.client_id;
+  await load().catch(e => P.toast(e.message, true));
+  P.router((view, arg) => { if (view === 'calls' && arg) renderDetail(arg); });
+  P.poll(() => load().catch(() => {}), 6000);
+})();
 </script>
 </body>
 </html>

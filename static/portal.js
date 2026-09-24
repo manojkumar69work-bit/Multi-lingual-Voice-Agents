@@ -68,6 +68,9 @@ const P = (() => {
 
   // ── Lead helpers ──
   const leadOf = (c) => (c && c.lead_data) || {};
+  // An "active" row that hasn't been touched in 15 minutes is almost certainly a
+  // call whose agent crashed before marking it finished, not a live call.
+  const stalled = (c) => c.status === 'active' && c.updated_at && Date.now() - new Date(c.updated_at) > 15 * 60 * 1000;
   const hasLead = (c) => Object.entries(leadOf(c)).some(([k, v]) => v && k !== 'notes');
   function leadName(c) {
     const ld = leadOf(c);
@@ -76,7 +79,7 @@ const P = (() => {
   function callTitle(c) {
     const n = leadName(c);
     if (n) return n;
-    return c.status === 'active' ? 'Caller on the line' : 'Unnamed caller';
+    return c.status === 'active' && !stalled(c) ? 'Caller on the line' : 'Unnamed caller';
   }
   function callLine(c) {
     const ld = leadOf(c);
@@ -150,6 +153,7 @@ const P = (() => {
   }
 
   function deliveryBadge(c, deliveries) {
+    if (stalled(c)) return '<span class="badge warn">Stalled — never ended</span>';
     if (c.status === 'active') return '<span class="badge live">On the line</span>';
     const ds = (deliveries || []).filter(d => d.session_id === c.session_id);
     if (ds.some(d => d.status === 'dead')) return '<span class="badge bad">Delivery failed</span>';
@@ -207,7 +211,7 @@ const P = (() => {
     const live = c.status === 'active';
     return `<button class="call-item" role="option" data-id="${esc(c.session_id)}" aria-selected="${selectedId === c.session_id}">
       <span class="t1">${esc(callTitle(c))}</span>
-      <span class="when">${live ? '<span class="dot-live">Live</span>' : ago(c.created_at)}</span>
+      <span class="when">${stalled(c) ? '<span class="badge warn">Stalled</span>' : live ? '<span class="dot-live">Live</span>' : ago(c.created_at)}</span>
       <span class="t2">${extra}${esc(callLine(c))} · ${dur(c.duration_seconds)}</span>
       ${strip(c.transcript, { label: false })}
     </button>`;
@@ -356,7 +360,7 @@ const P = (() => {
   }
 
   return { GLYPH, icon, esc, api, guard, logout, dur, clock, mins, num, ago, when, title,
-    leadOf, hasLead, leadName, callTitle, callLine, completeness, strip, talkShare,
+    leadOf, hasLead, stalled, leadName, callTitle, callLine, completeness, strip, talkShare,
     transcriptHTML, wireStrip, factsHTML, deliveryBadge, renderDetail, callItem, perDay, barChart,
     router, toast, mountChrome, downloadCSV, leadsCSV, poll };
 })();

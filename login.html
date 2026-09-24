@@ -5,77 +5,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sign in · MEA Voice Agent</title>
   <link rel="stylesheet" href="/static/app.css" />
+  <script src="/static/portal.js"></script>
   <style>
-    body { display: flex; align-items: center; justify-content: center; padding: 24px; }
-    .auth {
-      width: 100%; max-width: 392px;
-      background: linear-gradient(180deg, var(--raised), var(--panel));
-      border: 1px solid var(--line-2); border-radius: 18px;
-      padding: 30px 30px 26px; box-shadow: 0 30px 80px -28px rgba(0,0,0,.85);
-    }
-    .auth .brand { margin-bottom: 22px; }
-    .auth .brand h1 { font-size: 18px; }
-    .field-group { margin-top: 4px; }
-    .auth .btn { width: 100%; margin-top: 22px; padding: 11px; font-size: 14.5px; }
-    .auth .err { text-align: center; }
-    .auth .hint {
-      color: var(--faint); font-size: 11.5px; margin-top: 20px;
-      text-align: center; line-height: 1.6; padding-top: 18px; border-top: 1px solid var(--line);
-    }
+    body { display: grid; grid-template-columns: minmax(340px, 480px) 1fr; min-height: 100vh; }
+    .form-side { display: flex; flex-direction: column; justify-content: center; padding: 40px clamp(20px, 5vw, 64px); background: var(--surface); border-right: 1px solid var(--line); }
+    .form-side h1 { font-family: var(--f-display); font-size: 34px; font-weight: 700; letter-spacing: -.03em; margin-top: 44px; line-height: 1.05; }
+    .form-side > p { color: var(--muted); margin-top: 8px; }
+    form { margin-top: 18px; }
+    form .btn { width: 100%; margin-top: 22px; padding: 11px; font-size: 15px; }
+    .pw { position: relative; }
+    .pw button { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; padding: 4px 6px; }
+    .foot { margin-top: 36px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .call-side { display: flex; flex-direction: column; justify-content: center; padding: 48px clamp(24px, 6vw, 96px); gap: 22px; }
+    .call-side .eyebrow { font-family: var(--f-mono); font-size: 11px; color: var(--muted); letter-spacing: .02em; }
+    .call-side .strip.tall { height: 34px; max-width: 620px; }
+    .call-side .strip i { animation: grow .5s ease backwards; transform-origin: left; }
+    @keyframes grow { from { transform: scaleX(0); opacity: 0; } }
+    .call-side .transcript { max-width: 620px; }
+    .call-side .facts { max-width: 620px; margin-top: 0; }
+    .call-side h2 { font-family: var(--f-display); font-size: clamp(22px, 2.4vw, 30px); letter-spacing: -.02em; line-height: 1.15; max-width: 22ch; font-weight: 600; }
+    @media (max-width: 900px) { body { grid-template-columns: 1fr; } .call-side { display: none; } .form-side { border-right: 0; } }
   </style>
 </head>
 <body>
-  <form class="auth" id="form">
-    <div class="brand">
-      <div class="logo">M</div>
-      <div>
-        <h1>MEA Voice Agent</h1>
-        <div class="sub">Sign in to your portal</div>
-      </div>
-    </div>
-
-    <div class="field-group">
-      <label for="u">Username</label>
-      <input id="u" autocomplete="username" placeholder="admin or your client id" autofocus />
+  <section class="form-side">
+    <span class="mark"><span class="mark-glyph" data-glyph></span><span><span class="mark-name">MEA Voice</span><br><span class="mark-sub">AI receptionist for your business line</span></span></span>
+    <h1>Sign in</h1>
+    <p>Operators manage clients. Clients see their own calls and leads.</p>
+    <form id="form" novalidate>
+      <label for="u">Login ID</label>
+      <input id="u" autocomplete="username" placeholder="admin, or your business's login ID" autofocus required />
       <label for="p">Password</label>
-      <input id="p" type="password" autocomplete="current-password" placeholder="••••••••" />
-    </div>
+      <div class="pw"><input id="p" type="password" autocomplete="current-password" required /><button type="button" id="show" aria-pressed="false">Show</button></div>
+      <button type="submit" class="btn" id="go">Sign in</button>
+      <div class="err" id="err" role="alert"></div>
+    </form>
+    <div class="foot"><a href="/">Try the agent</a><span>Forgot your password? Ask your account manager.</span></div>
+  </section>
 
-    <button type="submit" class="btn">Sign in</button>
-    <div class="err" id="err"></div>
-    <div class="hint">Admins manage clients · Clients view their calls &amp; leads</div>
-  </form>
+  <section class="call-side" aria-hidden="true">
+    <div class="eyebrow">Sample call · 2m 14s · Hinglish</div>
+    <h2>Every call ends as a lead you can act on.</h2>
+    <div id="sampleStrip"></div>
+    <div id="sampleT"></div>
+    <div id="sampleF"></div>
+  </section>
 
   <script>
-    const form = document.getElementById('form');
-    const err = document.getElementById('err');
+    P.mountChrome();
+    const sample = [
+      { role: 'assistant', content: 'Namaste! Skyline Realty mein aapka swagat hai, main Riya bol rahi hoon. Aap flat dekh rahe hain ya plot?' },
+      { role: 'user', content: 'Haan ji, 2BHK chahiye Powai ke paas, budget around 1.5 crore.' },
+      { role: 'assistant', content: 'Bilkul. Aap kab tak shift karna chahenge? Aur aapka naam jaan sakti hoon?' },
+      { role: 'user', content: 'Main Arjun. Teen mahine mein ho jaye toh best hai.' },
+      { role: 'assistant', content: 'Thank you Arjun ji. Kya is Saturday site visit rakh dein?' },
+      { role: 'user', content: 'Haan, Saturday theek hai.' },
+    ];
+    document.getElementById('sampleStrip').innerHTML = P.strip(sample, { tall: true, label: false });
+    document.querySelectorAll('#sampleStrip i').forEach((s, i) => s.style.animationDelay = (i * 90) + 'ms');
+    document.getElementById('sampleT').innerHTML = P.transcriptHTML(sample.slice(0, 4), 'Riya');
+    document.getElementById('sampleF').innerHTML = P.factsHTML({ lead_data: { name: 'Arjun', property_type: '2BHK', budget: '₹1.5 Cr', location: 'Powai', timeline: '3 months' } });
 
-    // If already logged in, skip straight to the right portal.
+    // Already signed in? Go straight to the right portal.
     fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(u => {
       if (u && u.role) location.href = u.role === 'admin' ? '/admin' : '/client';
     }).catch(() => {});
 
-    form.addEventListener('submit', async (e) => {
+    const show = document.getElementById('show'), pw = document.getElementById('p');
+    show.addEventListener('click', () => {
+      const on = pw.type === 'password'; pw.type = on ? 'text' : 'password';
+      show.textContent = on ? 'Hide' : 'Show'; show.setAttribute('aria-pressed', on);
+    });
+
+    document.getElementById('form').addEventListener('submit', async (e) => {
       e.preventDefault();
-      err.textContent = '';
+      const err = document.getElementById('err'), go = document.getElementById('go');
       const username = document.getElementById('u').value.trim();
-      const password = document.getElementById('p').value;
+      if (!username || !pw.value) { err.textContent = 'Enter your login ID and password.'; return; }
+      err.textContent = ''; go.disabled = true; go.textContent = 'Signing in…';
       try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          err.textContent = d.detail || 'Login failed';
-          return;
-        }
-        const u = await res.json();
-        location.href = u.role === 'admin' ? '/admin' : '/client';
-      } catch (e) {
-        err.textContent = 'Network error';
-      }
+        const res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password: pw.value }) });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) { err.textContent = res.status === 401 ? 'That login ID and password don’t match.' : (d.detail || 'Sign-in failed. Try again.'); return; }
+        location.href = d.role === 'admin' ? '/admin' : '/client';
+      } catch (_) {
+        err.textContent = 'Can’t reach the server. Check your connection and try again.';
+      } finally { go.disabled = false; go.textContent = 'Sign in'; }
     });
   </script>
 </body>

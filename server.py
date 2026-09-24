@@ -478,11 +478,11 @@ def client_deliveries(client_id: str = Depends(auth.require_client)):
 # ─── Internal dashboard (kept; global view — admin only) ──────────────────────
 
 @app.get("/api/dashboard/calls")
-def dashboard_calls(_admin=Depends(auth.require_admin)):
+def dashboard_calls(limit: int = 20, _admin=Depends(auth.require_admin)):
     """Global cross-tenant view. Was unauthenticated, which exposed every
     client's transcripts and lead data to anyone who knew the URL."""
     active = call_store.get_active_calls()
-    recent = call_store.list_calls(status="completed", limit=20)
+    recent = call_store.list_calls(status="completed", limit=max(1, min(limit, 500)))
     completed_list = call_store.list_calls(status="completed", limit=9999)
     return {
         "active": active,

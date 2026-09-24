@@ -5,272 +5,511 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin · MEA Voice Agent</title>
   <link rel="stylesheet" href="/static/app.css" />
+  <script src="/static/portal.js"></script>
   <style>
-    .drawer-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 13px; }
-    .drawer-list { padding: 14px; }
-    /* admin call cards sit on the panel, so nest them on the inset surface */
-    #callsList .call-card { background: var(--inset); }
+    .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+    .live-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+    .live-card:hover { border-color: var(--line-2); }
+    .live-card .top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+    .live-card .client { font-family: var(--f-display); font-weight: 600; font-size: 17px; }
+    .live-card .clock { font-family: var(--f-mono); font-size: 20px; font-variant-numeric: tabular-nums; }
+    .live-card .last { font-size: 13.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 6px; }
+    .live-card .last .turn { grid-template-columns: 50px 1fr; }
+    .live-card .last .say { padding: 5px 9px; font-size: 13px; }
+    .attn { display: flex; flex-direction: column; }
+    .attn a { display: flex; justify-content: space-between; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--line); text-decoration: none; font-size: 14px; }
+    .attn a:last-child { border-bottom: 0; }
+    .attn a:hover span:first-child { text-decoration: underline; }
+    .presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+    .client-cell b { display: block; }
+    .client-cell .mono { color: var(--muted); }
+    .mini-quota { width: 90px; }
+    .secret-state { font-size: 12px; font-weight: 400; color: var(--ok); margin-left: 6px; }
   </style>
 </head>
 <body>
-<div class="container">
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">M</div>
-      <div>
-        <h1>Voice Agent <span class="tag">Admin</span></h1>
-        <div class="sub">Manage clients &amp; usage</div>
-      </div>
-    </div>
-    <div class="top-actions">
-      <button class="btn" onclick="openCreate()">+ Add client</button>
-      <button class="btn ghost" onclick="location.href='/dashboard'">Global dashboard</button>
-      <button class="btn ghost" onclick="logout()">Sign out</button>
-    </div>
-  </header>
-
-  <div class="stat-grid c5" id="stats">
-    <div class="stat-card"><div class="num" id="sClients">0</div><div class="label">Clients</div></div>
-    <div class="stat-card"><div class="num" id="sCalls">0</div><div class="label">Total calls</div></div>
-    <div class="stat-card is-amber"><div class="num" id="sActive">0</div><div class="label">Active now</div></div>
-    <div class="stat-card is-blue"><div class="num" id="sMinutes">0</div><div class="label">Total minutes</div></div>
-    <div class="stat-card is-violet"><div class="num" id="sLeads">0</div><div class="label">Leads</div></div>
-  </div>
-
-  <div class="section">
-    <div class="section-head"><h2>Clients</h2></div>
-    <div class="panel">
-      <table class="data-table">
-        <thead>
-          <tr><th>Agency</th><th>Client ID</th><th>Lang</th><th>Agent</th><th class="num">Calls</th><th class="num">Active</th><th>Minutes (mo / total)</th><th>Quota</th><th class="num">Leads</th><th>Status</th><th></th></tr>
-        </thead>
-        <tbody id="clientRows"><tr><td colspan="11" class="empty">Loading…</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="callsPanel" style="display:none" class="section">
-    <div class="drawer-title"><h2 id="callsTitle">Calls</h2><button class="btn ghost sm" onclick="hideCalls()">Close</button></div>
-    <div class="panel drawer-list"><div id="callsList"></div></div>
-  </div>
+<div class="topbar-m">
+  <span class="mark"><span class="mark-glyph" data-glyph></span><span class="mark-name">MEA Voice</span></span>
+  <button class="btn ghost icon" id="railBtn" aria-label="Open menu" data-icon="menu"></button>
 </div>
 
-<!-- Add/Edit modal -->
-<div class="overlay" id="overlay">
-  <div class="modal">
-    <div class="modal-head"><h3 id="modalTitle">Add client</h3><button class="x" onclick="closeModal()">×</button></div>
-    <div class="modal-body">
-      <input type="hidden" id="f_id" />
-      <div class="grid2">
-        <div><label>Agency name</label><input id="f_name" placeholder="Mumbai Realty" /></div>
-        <div><label>Login id (slug)</label><input id="f_slug" placeholder="auto from name" /><div class="field-hint">Used as the login username. Leave blank to auto-generate.</div></div>
+<div class="shell">
+  <aside class="rail">
+    <span class="mark"><span class="mark-glyph" data-glyph></span><span><span class="mark-name">MEA Voice</span><br><span class="mark-sub">Operator console</span></span></span>
+    <nav class="nav" aria-label="Sections">
+      <button data-view="overview" data-icon="home">Overview</button>
+      <button data-view="live" data-icon="live">Live now <span class="n" id="nLive"></span></button>
+      <button data-view="clients" data-icon="users">Clients <span class="n" id="nClients"></span></button>
+      <button data-view="calls" data-icon="calls">All calls</button>
+      <button data-view="delivery" data-icon="send">Lead delivery <span class="n" id="nDeliv"></span></button>
+      <div class="nav-label">Tools</div>
+      <a href="/" target="_blank" rel="noopener" data-icon="mic">Test caller</a>
+      <a href="/demo/sarvam" target="_blank" rel="noopener" data-icon="live">Voice samples</a>
+    </nav>
+    <div class="rail-foot">
+      <div class="who"><b>Operator</b><span>admin</span></div>
+      <div class="row">
+        <button class="btn ghost sm" id="themeBtn" aria-label="Toggle theme"></button>
+        <button class="btn ghost sm" data-icon="out" onclick="P.logout()">Sign out</button>
       </div>
-      <div class="grid2">
-        <div><label>Agent name</label><input id="f_agent" placeholder="Riya" /></div>
-        <div><label>Agent role description</label><input id="f_role_description" placeholder="e.g. a polite medical receptionist" /></div>
-      </div>
-      <div class="grid2">
-        <div><label>Business type</label><input id="f_business_type" placeholder="e.g. medical clinic, car dealership, real estate" /></div>
-        <div><label>Language</label><select id="f_language"><option value="hi">Hinglish (hi)</option><option value="en">English (en)</option><option value="te">Telugu (te)</option></select></div>
-      </div>
-      <label>Lead fields (comma-separated) <span class="muted">(what the AI should collect — blank uses name, notes)</span></label>
-      <input id="f_lead_fields" placeholder="name,property_type,budget,location,timeline,notes" />
-      <label>Custom system prompt <span class="muted">(optional — blank uses the built-in template)</span></label>
-      <textarea id="f_prompt" placeholder="You are Riya, a warm real estate consultant for Mumbai Realty…"></textarea>
-      <label>Business info <span class="muted">(optional — the agent uses this to answer caller questions)</span></label>
-      <textarea id="f_business" placeholder="Areas served: Bandra, Andheri, Powai.&#10;Flagship project: Skyline Heights — 2/3BHK, 1.8–3.2 Cr.&#10;Office hours: Mon–Sat 10am–7pm.&#10;Brokerage: 1% of deal value. RERA: P51900012345."></textarea>
-      <div class="field-hint">Facts the agent can tell callers — areas, projects, pricing, office hours, RERA no. One fact per line works best.</div>
-      <label>Custom greeting <span class="muted">(optional)</span></label>
-      <input id="f_greeting" placeholder="Namaste! Mumbai Realty mein aapka swagat hai…" />
-      <label>Closing instructions <span class="muted">(optional — how the agent should end the call)</span></label>
-      <textarea id="f_closing_instructions" placeholder="Once you have gathered all details, ask if they would like a site visit. Do not push. Acknowledge and say a colleague will call back."></textarea>
-      <div class="grid2">
-        <div><label>Login password</label><input id="f_password" placeholder="set a password" /></div>
-        <div><label>Lead-alert WhatsApp <span class="muted">(optional)</span></label><input id="f_whatsapp" placeholder="+9198XXXXXXXX" /></div>
-      </div>
-      <div class="grid2">
-        <div><label>Monthly minute quota <span class="muted">(0 = unlimited)</span></label><input id="f_quota" type="number" min="0" value="0" /></div>
-        <div><label>Phone number <span class="muted">(SIP DID, later)</span></label><input id="f_phone" placeholder="+9122XXXXXXXX" /></div>
-      </div>
-      <div class="checkbox"><input type="checkbox" id="f_enforce" /><label>Enforce quota (decline calls over the cap)</label></div>
-      <div class="checkbox"><input type="checkbox" id="f_active" checked /><label>Active</label></div>
-      <div class="err" id="modalErr"></div>
     </div>
-    <div class="modal-actions">
-      <button class="btn ghost" onclick="closeModal()">Cancel</button>
-      <button class="btn" id="saveBtn" onclick="saveClient()">Save</button>
+  </aside>
+
+  <main class="main">
+    <!-- ═══ Overview ═══ -->
+    <section class="view" id="v-overview">
+      <div class="page-head">
+        <div><h1>Overview</h1><p>Every client, every call, in one place.</p></div>
+        <div class="actions"><span class="stamp" id="stamp"></span><button class="btn" data-icon="plus" onclick="openClient()">Add client</button></div>
+      </div>
+      <div class="ledger">
+        <div><div class="v" id="kClients">–</div><div class="k">Clients</div></div>
+        <div><div class="v" id="kCalls">–</div><div class="k">Calls answered</div></div>
+        <div><div class="v" id="kLeads">–</div><div class="k">Leads captured</div></div>
+        <div><div class="v" id="kMin">–</div><div class="k">Minutes, all time</div></div>
+        <div><div class="v" id="kLive">–</div><div class="k">On the line now</div></div>
+      </div>
+      <div class="two">
+        <div class="panel pad">
+          <div class="panel-title"><h3>Calls per day, all clients</h3><span>Last 14 days</span></div>
+          <div class="chart" id="chart"></div>
+        </div>
+        <div class="panel pad">
+          <div class="panel-title"><h3>Needs attention</h3></div>
+          <div class="attn" id="attn"></div>
+        </div>
+      </div>
+      <div class="panel pad" style="margin-top:16px">
+        <div class="panel-title"><h3>Busiest clients</h3><span>By calls answered</span></div>
+        <div class="bars-h" id="busiest"></div>
+      </div>
+    </section>
+
+    <!-- ═══ Live ═══ -->
+    <section class="view" id="v-live">
+      <div class="page-head">
+        <div><h1>Live now</h1><p>Calls in progress across every client. Refreshes every few seconds.</p></div>
+        <div class="key"><span style="--c:var(--caller)">Caller</span><span style="--c:var(--agent)">Agent</span></div>
+      </div>
+      <div class="live-grid" id="liveGrid"></div>
+    </section>
+
+    <!-- ═══ Clients ═══ -->
+    <section class="view" id="v-clients">
+      <div class="page-head">
+        <div><h1>Clients</h1><p>Each client gets its own agent, prompt, login and minute plan. Select a row to see its calls or change its setup.</p></div>
+        <div class="actions"><button class="btn" data-icon="plus" onclick="openClient()">Add client</button></div>
+      </div>
+      <div class="toolbar">
+        <label class="search grow"><span class="sr-only">Search clients</span><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="cq" type="search" placeholder="Search clients" /></label>
+      </div>
+      <div class="panel table-wrap"><table class="t" id="clientTable"></table></div>
+    </section>
+
+    <!-- ═══ All calls ═══ -->
+    <section class="view" id="v-calls">
+      <div class="page-head">
+        <div><h1>All calls</h1><p>The newest 500 calls across clients.</p></div>
+        <div class="actions"><button class="btn ghost" data-icon="down" onclick="P.leadsCSV(ALL.filter(matchCall), 'all-leads.csv')">Export leads</button></div>
+      </div>
+      <div class="toolbar">
+        <label class="search grow"><span class="sr-only">Search calls</span><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input id="q" type="search" placeholder="Search names, numbers, or anything said" /></label>
+        <select id="clientFilter" style="width:auto" aria-label="Client"><option value="">All clients</option></select>
+        <div class="seg" role="group" aria-label="Filter calls" id="filter">
+          <button aria-pressed="true" data-f="all">All</button>
+          <button aria-pressed="false" data-f="lead">With a lead</button>
+          <button aria-pressed="false" data-f="nolead">No lead</button>
+        </div>
+      </div>
+      <div class="split">
+        <div class="panel call-list" id="callList" role="listbox" aria-label="Calls"></div>
+        <div class="panel detail" id="detail"><div class="empty"><b>No call selected</b>Choose one from the list.</div></div>
+      </div>
+    </section>
+
+    <!-- ═══ Delivery ═══ -->
+    <section class="view" id="v-delivery">
+      <div class="page-head">
+        <div><h1>Lead delivery</h1><p>Every lead is queued per destination and retried with backoff. Send a failed one again once its destination is fixed.</p></div>
+      </div>
+      <div class="ledger" style="max-width:560px">
+        <div><div class="v" id="dOk">–</div><div class="k">Delivered</div></div>
+        <div><div class="v" id="dPend">–</div><div class="k">Waiting to retry</div></div>
+        <div><div class="v" id="dDead">–</div><div class="k">Gave up</div></div>
+      </div>
+      <div class="toolbar" style="margin-top:20px">
+        <div class="seg" role="group" aria-label="Status" id="dFilter">
+          <button aria-pressed="true" data-s="">All</button>
+          <button aria-pressed="false" data-s="dead">Gave up</button>
+          <button aria-pressed="false" data-s="pending">Retrying</button>
+          <button aria-pressed="false" data-s="delivered">Delivered</button>
+        </div>
+      </div>
+      <div class="panel table-wrap"><table class="t" id="delivTable"></table></div>
+    </section>
+  </main>
+</div>
+
+<!-- ═══ Client drawer ═══ -->
+<div class="scrim" id="scrim" onclick="closeClient()"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+  <div class="drawer-head">
+    <div class="top">
+      <div><h3 id="dTitle">Add client</h3><div class="stamp" id="dSub"></div></div>
+      <div class="actions">
+        <a class="btn ghost sm" id="dTest" target="_blank" rel="noopener" data-icon="mic" hidden>Test call</a>
+        <button class="btn ghost icon" onclick="closeClient()" aria-label="Close" data-icon="x"></button>
+      </div>
+    </div>
+    <div class="tabs" role="tablist" id="dTabs">
+      <button role="tab" data-tab="calls">Calls</button>
+      <button role="tab" data-tab="agent">Agent</button>
+      <button role="tab" data-tab="knowledge">Script &amp; knowledge</button>
+      <button role="tab" data-tab="delivery">Lead delivery</button>
+      <button role="tab" data-tab="access">Access &amp; plan</button>
     </div>
   </div>
-</div>
+  <div class="drawer-body">
+    <div class="tabpane" data-pane="calls"><div id="dCalls"></div></div>
+
+    <div class="tabpane" data-pane="agent">
+      <div class="label">Start from a preset <span class="opt">(fills the fields below — you can edit them after)</span></div>
+      <div class="presets" id="presets"></div>
+      <div class="grid2">
+        <div><label for="f_name">Business name</label><input id="f_name" placeholder="Mumbai Realty" /></div>
+        <div><label for="f_business_type">Business type</label><input id="f_business_type" placeholder="real estate agency" /></div>
+      </div>
+      <div class="grid2">
+        <div><label for="f_agent">Agent's name</label><input id="f_agent" placeholder="Riya" /></div>
+        <div><label for="f_language">Language</label>
+          <select id="f_language"><option value="hi">Hinglish — Hindi in Roman letters</option><option value="te">Telugu</option><option value="en">English</option></select></div>
+      </div>
+      <label for="f_role_description">How the agent should come across</label>
+      <input id="f_role_description" placeholder="a warm, professional real estate consultant" />
+      <label for="f_greeting">First line on every call <span class="opt">(blank uses the built-in greeting)</span></label>
+      <input id="f_greeting" placeholder="Namaste! Mumbai Realty mein aapka swagat hai, main Riya bol rahi hoon." />
+      <div class="prompt-preview" id="greetPreview"></div>
+      <label for="f_lead_fields">Details to collect from each caller <span class="opt">(comma-separated)</span></label>
+      <input id="f_lead_fields" placeholder="name,phone,property_type,budget,location,timeline,notes" />
+      <div class="hint">These become the columns in the client's lead sheet and CSV. The call submits a lead as soon as it has a name and a contact.</div>
+    </div>
+
+    <div class="tabpane" data-pane="knowledge">
+      <label for="f_business">Business facts the agent can share</label>
+      <textarea id="f_business" rows="7" placeholder="Areas served: Bandra, Andheri, Powai.&#10;Flagship project: Skyline Heights — 2/3BHK, ₹1.8–3.2 Cr.&#10;Office hours: Mon–Sat 10am–7pm.&#10;RERA: P51900012345."></textarea>
+      <div class="hint">One fact per line works best. The agent only states what is written here, so leave out anything you don't want repeated to callers.</div>
+      <label for="f_closing_instructions">How to end the call</label>
+      <textarea id="f_closing_instructions" rows="3" placeholder="Offer a site visit once you have their details. Don't push. Say a colleague will call back within the hour."></textarea>
+      <label for="f_prompt">Full custom prompt <span class="opt">(advanced — replaces the built-in template entirely)</span></label>
+      <textarea id="f_prompt" class="code" placeholder="Leave blank to build the prompt from the fields above."></textarea>
+    </div>
+
+    <div class="tabpane" data-pane="delivery">
+      <p class="hint" style="margin-top:14px">Leads go to every destination filled in here. Each send is retried if the destination is down.</p>
+      <label for="f_whatsapp">WhatsApp number for lead alerts</label>
+      <input id="f_whatsapp" placeholder="+91 98XXX XXXXX" inputmode="tel" />
+      <label for="f_sheet">Google Sheet ID <span class="opt">(blank uses the default sheet)</span></label>
+      <input id="f_sheet" placeholder="1AbC…xyz — the long ID in the sheet's URL" />
+      <label for="f_webhook">CRM webhook URL <span class="opt">(LeadSquared, Zoho, Zapier, n8n…)</span></label>
+      <input id="f_webhook" placeholder="https://…" inputmode="url" />
+      <label for="f_webhook_secret">Webhook signing secret <span class="secret-state" id="whState"></span></label>
+      <input id="f_webhook_secret" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current secret" />
+      <div class="hint">When set, each request carries an <span class="mono">X-MEA-Signature</span> HMAC header the CRM can verify.</div>
+    </div>
+
+    <div class="tabpane" data-pane="access">
+      <div class="grid2">
+        <div><label for="f_slug">Login ID</label><input id="f_slug" placeholder="made from the name if blank" /><div class="hint">The client signs in with this. It can't be changed later.</div></div>
+        <div><label for="f_password">Password <span class="secret-state" id="pwState"></span></label><input id="f_password" type="password" autocomplete="new-password" placeholder="Set a password" /></div>
+      </div>
+      <div class="grid2">
+        <div><label for="f_quota">Monthly minutes <span class="opt">(0 = unlimited)</span></label><input id="f_quota" type="number" min="0" value="0" /></div>
+        <div><label for="f_phone">Phone number <span class="opt">(for SIP routing)</span></label><input id="f_phone" placeholder="+91 22 XXXX XXXX" inputmode="tel" /></div>
+      </div>
+      <div class="check"><input type="checkbox" id="f_enforce" /><label for="f_enforce">Decline calls once the monthly minutes run out</label></div>
+      <div class="check"><input type="checkbox" id="f_active" checked /><label for="f_active">Agent is answering calls for this client</label></div>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn danger sm" id="delBtn" onclick="deleteClient()" hidden>Delete client</button>
+    <span class="err" id="dErr" style="margin:0;flex:1"></span>
+    <div class="actions"><button class="btn ghost" onclick="closeClient()">Cancel</button><button class="btn" id="saveBtn" onclick="saveClient()">Save client</button></div>
+  </div>
+</aside>
 
 <script>
-let CLIENTS = [];
+const $ = (id) => document.getElementById(id);
+const LANG = { hi: 'Hinglish', te: 'Telugu', en: 'English' };
+let CLIENTS = [], ALL = [], ACTIVE = [], DELIV = [], DSTATS = {};
+let view = 'overview', selected = null, filter = 'all', query = '', clientFilter = '', dStatus = '';
+let editing = null, drawerCalls = [], drawerSel = null;
 
-async function guard() {
-  const r = await fetch('/api/auth/me');
-  if (!r.ok) { location.href = '/login'; return false; }
-  const u = await r.json();
-  if (u.role !== 'admin') { location.href = '/client'; return false; }
-  return true;
-}
-
-async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/login'; }
-
-function fmtMin(m) { return (m || 0).toFixed(1); }
+const PRESETS = {
+  'Real estate': { business_type: 'real estate agency', role_description: 'a warm, professional real estate consultant', lead_fields: 'name,phone,property_type,budget,location,timeline,notes',
+    closing_instructions: 'Once you have their details, offer a site visit. Do not push. Say a colleague will call back shortly.' },
+  'Clinic': { business_type: 'medical clinic', role_description: 'a calm, polite clinic receptionist', lead_fields: 'name,phone,concern,preferred_doctor,preferred_time,notes',
+    closing_instructions: 'Confirm the preferred time and tell them the clinic will call to confirm the appointment. Never give medical advice.' },
+  'Car dealership': { business_type: 'car dealership', role_description: 'a friendly car sales advisor', lead_fields: 'name,phone,model_interest,budget,finance_needed,test_drive_date,notes',
+    closing_instructions: 'Offer a test drive and say the showroom will call to confirm the slot.' },
+  'Coaching institute': { business_type: 'coaching institute', role_description: 'a helpful admissions counsellor', lead_fields: 'name,phone,student_class,course_interest,preferred_batch,notes',
+    closing_instructions: 'Offer a free demo class and say a counsellor will call back with batch timings.' },
+};
 
 async function load() {
-  const [ov, cl] = await Promise.all([
-    fetch('/api/admin/overview').then(r => r.json()),
-    fetch('/api/admin/clients').then(r => r.json()),
+  const [ov, cl, dash, dv] = await Promise.all([
+    P.api('/api/admin/overview'),
+    P.api('/api/admin/clients'),
+    P.api('/api/dashboard/calls?limit=500'),
+    P.api('/api/admin/deliveries?limit=200' + (dStatus ? '&status=' + dStatus : '')),
   ]);
-  document.getElementById('sClients').textContent = ov.total_clients;
-  document.getElementById('sCalls').textContent = ov.total_calls;
-  document.getElementById('sActive').textContent = ov.total_active;
-  document.getElementById('sMinutes').textContent = fmtMin(ov.total_minutes);
-  document.getElementById('sLeads').textContent = ov.total_leads;
-
   CLIENTS = cl.clients || [];
-  const rows = document.getElementById('clientRows');
-  if (!CLIENTS.length) { rows.innerHTML = '<tr><td colspan="11" class="empty">No clients yet. Click “Add client”.</td></tr>'; return; }
-  rows.innerHTML = CLIENTS.map(c => `
-    <tr class="clickable" onclick="showCalls('${c.id}', event)">
-      <td><strong>${esc(c.name || c.id)}</strong></td>
-      <td class="muted">${esc(c.id)}</td>
-      <td><span class="pill lang">${c.language}</span></td>
-      <td>${esc(c.agent_name || '—')}</td>
-      <td class="num">${c.calls}</td>
-      <td class="num">${c.active_calls ? '<span class="pill on">'+c.active_calls+'</span>' : '0'}</td>
-      <td class="num">${fmtMin(c.month_minutes)} / ${fmtMin(c.total_minutes)}</td>
-      <td>${c.minute_quota ? c.minute_quota + (c.enforce_quota ? ' ⛔' : '') : '<span class="muted">∞</span>'}</td>
-      <td class="num">${c.lead_count}</td>
-      <td>${renderStatus(c)}</td>
-      <td onclick="event.stopPropagation()">
-        <div class="row-actions">
-          <button class="btn ghost sm" onclick="openEdit('${c.id}')">Edit</button>
-          <button class="btn danger sm" onclick="del('${c.id}')">Del</button>
-        </div>
-      </td>
-    </tr>`).join('');
+  ACTIVE = dash.active || [];
+  ALL = [...ACTIVE, ...(dash.recent || [])];
+  DELIV = dv.deliveries || []; DSTATS = dv.stats || {};
+  renderOverview(ov);
+  renderLive();
+  renderClients();
+  renderCalls();
+  renderDelivery();
+  $('stamp').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+const clientName = (id) => { const c = CLIENTS.find(x => x.id === id); return c ? (c.name || c.id) : id === 'default' ? 'Demo agent' : id ? id : 'Unassigned'; };
+
+// ── Overview ──
+function renderOverview(ov) {
+  $('kClients').textContent = P.num(ov.total_clients);
+  $('kCalls').textContent = P.num(ov.total_calls);
+  $('kLeads').textContent = P.num(ov.total_leads);
+  $('kMin').textContent = P.mins(ov.total_minutes);
+  $('kLive').textContent = ov.total_active || 0;
+  $('kLive').classList.toggle('live-v', !!ov.total_active);
+  $('nLive').textContent = ov.total_active ? ov.total_active : '';
+  $('nLive').className = 'n' + (ov.total_active ? ' live' : '');
+  $('nClients').textContent = CLIENTS.length || '';
+  P.barChart($('chart'), P.perDay(ALL, 14));
+
+  const items = [];
+  if (DSTATS.dead) items.push([`${DSTATS.dead} lead ${DSTATS.dead === 1 ? 'send' : 'sends'} gave up`, '#delivery', 'bad', 'Review']);
+  for (const c of CLIENTS) {
+    if (c.minute_quota && c.month_minutes >= c.minute_quota * 0.8)
+      items.push([`${c.name || c.id} has used ${Math.round(c.month_minutes / c.minute_quota * 100)}% of its minutes`, '#clients', c.month_minutes >= c.minute_quota ? 'bad' : 'warn', 'Plan']);
+    if (c.active === false) items.push([`${c.name || c.id} is paused`, '#clients', '', 'Paused']);
+    if (!c.password_set) items.push([`${c.name || c.id} has no portal password`, '#clients', 'warn', 'Access']);
+  }
+  $('attn').innerHTML = items.length ? items.map(([t, h, cls, b]) => `<a href="${h}"><span>${P.esc(t)}</span><span class="badge ${cls}">${b}</span></a>`).join('')
+    : '<div class="empty" style="padding:18px 0"><b>All clear</b>No failed sends, no clients near their minute plan.</div>';
+
+  const top = [...CLIENTS].sort((a, b) => b.calls - a.calls).slice(0, 6);
+  const max = Math.max(1, ...top.map(c => c.calls));
+  $('busiest').innerHTML = top.length ? top.map(c => `<div class="row"><span class="name">${P.esc(c.name || c.id)}</span><span class="track"><i style="width:${c.calls / max * 100}%"></i></span><span class="n">${c.calls}</span></div>`).join('')
+    : '<div class="empty"><b>No clients yet</b><button class="btn" onclick="openClient()">Add your first client</button></div>';
 }
 
-function renderStatus(c) {
-  return c.active === false ? '<span class="pill off">off</span>' : '<span class="pill on">on</span>';
+// ── Live ──
+function renderLive() {
+  const grid = $('liveGrid');
+  if (!ACTIVE.length) { grid.innerHTML = '<div class="panel empty" style="grid-column:1/-1"><b>No calls right now</b>Start one from the <a href="/" target="_blank">test caller</a> to see it here.</div>'; return; }
+  grid.innerHTML = ACTIVE.map(c => {
+    const last = (c.transcript || []).slice(-2);
+    const started = c.created_at ? new Date(c.created_at).getTime() : Date.now();
+    return `<button class="panel live-card" data-id="${P.esc(c.session_id)}">
+      <div class="top"><span class="client">${P.esc(clientName(c.client_id))}</span><span class="clock" data-start="${started}">${P.clock((Date.now() - started) / 1000)}</span></div>
+      <div class="stamp">${P.esc(c.room_name || c.session_id)}${P.hasLead(c) ? ' · lead forming' : ''}</div>
+      ${P.strip(c.transcript)}
+      <div class="last">${last.length ? P.transcriptHTML(last, 'Agent').replace('class="transcript"', 'class="transcript" style="gap:6px"') : '<span class="muted">Waiting for the first words…</span>'}</div>
+    </button>`;
+  }).join('');
+  grid.querySelectorAll('.live-card').forEach(b => b.addEventListener('click', () => { location.hash = 'calls/' + b.dataset.id; }));
+}
+setInterval(() => document.querySelectorAll('.clock[data-start]').forEach(e => e.textContent = P.clock((Date.now() - +e.dataset.start) / 1000)), 1000);
+
+// ── Clients ──
+function renderClients() {
+  const q = $('cq').value.trim().toLowerCase();
+  const list = CLIENTS.filter(c => !q || [c.name, c.id, c.agent_name, c.business_type].join(' ').toLowerCase().includes(q));
+  const sel = $('clientFilter'), cur = sel.value;
+  const orphans = [...new Set(ALL.map(c => c.client_id || ''))].filter(id => !CLIENTS.some(c => c.id === id));
+  sel.innerHTML = '<option value="">All clients</option>' + [...CLIENTS.map(c => c.id), ...orphans].map(id => `<option value="${P.esc(id || '__none')}">${P.esc(clientName(id))}</option>`).join('');
+  sel.value = cur;
+  if (!CLIENTS.length) { $('clientTable').innerHTML = '<tbody><tr><td class="empty"><b>No clients yet</b>Add one to give them their own agent and portal.<br><button class="btn" onclick="openClient()">Add client</button></td></tr></tbody>'; return; }
+  $('clientTable').innerHTML = `<thead><tr><th>Client</th><th>Agent</th><th class="r">Calls</th><th class="r">Leads</th><th>Minutes this month</th><th>Status</th><th></th></tr></thead>
+  <tbody>${list.map(c => {
+    const pct = c.minute_quota ? Math.min(100, c.month_minutes / c.minute_quota * 100) : 0;
+    const rate = c.calls ? Math.round(c.lead_count / c.calls * 100) : 0;
+    return `<tr class="click" data-id="${P.esc(c.id)}">
+      <td class="client-cell"><b>${P.esc(c.name || c.id)}</b><span class="mono">${P.esc(c.id)}</span></td>
+      <td>${P.esc(c.agent_name || '—')} <span class="lang">${P.esc(c.language)}</span></td>
+      <td class="r">${c.active_calls ? `<span class="dot-live">${c.active_calls}</span> ` : ''}${P.num(c.calls)}</td>
+      <td class="r">${P.num(c.lead_count)} <span class="muted mono">${c.calls ? rate + '%' : ''}</span></td>
+      <td><span class="mono">${P.mins(c.month_minutes)}${c.minute_quota ? ' / ' + P.num(c.minute_quota) : ''}</span>
+        ${c.minute_quota ? `<div class="quota mini-quota ${pct >= 100 ? 'over' : pct >= 80 ? 'hot' : ''}"><i style="width:${pct}%"></i></div>` : ''}</td>
+      <td>${c.active === false ? '<span class="badge">Paused</span>' : '<span class="badge ok">Answering</span>'}</td>
+      <td class="r"><button class="btn ghost sm" data-edit="${P.esc(c.id)}">Edit</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">No client matches that search.</td></tr>'}</tbody>`;
+  $('clientTable').querySelectorAll('tr.click').forEach(r => r.addEventListener('click', (e) => {
+    const edit = e.target.closest('[data-edit]');
+    openClient(r.dataset.id, edit ? 'agent' : 'calls');
+  }));
 }
 
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
-
-// ── Modal ──
-function openCreate() {
-  document.getElementById('modalTitle').textContent = 'Add client';
-  ['f_id','f_name','f_slug','f_agent','f_role_description','f_business_type','f_lead_fields','f_prompt','f_business','f_greeting','f_closing_instructions','f_password','f_whatsapp','f_phone'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('f_quota').value = 0;
-  document.getElementById('f_language').value = 'hi';
-  document.getElementById('f_enforce').checked = false;
-  document.getElementById('f_active').checked = true;
-  document.getElementById('f_slug').disabled = false;
-  document.getElementById('modalErr').textContent = '';
-  document.getElementById('overlay').classList.add('show');
+// ── All calls ──
+function matchCall(c) {
+  if (clientFilter && (c.client_id || '__none') !== clientFilter) return false;
+  if (filter === 'lead' && !P.hasLead(c)) return false;
+  if (filter === 'nolead' && P.hasLead(c)) return false;
+  if (!query) return true;
+  return [JSON.stringify(P.leadOf(c)), c.summary, c.caller_phone, clientName(c.client_id), ...(c.transcript || []).map(m => m.content)].join(' ').toLowerCase().includes(query);
+}
+function renderCalls() {
+  const list = ALL.filter(matchCall);
+  $('callList').innerHTML = list.length ? list.map(c => P.callItem(c, selected, `<b>${P.esc(clientName(c.client_id))}</b> · `)).join('')
+    : '<div class="empty"><b>Nothing matches</b>Try a different search or filter.</div>';
+  $('callList').querySelectorAll('.call-item').forEach(b => b.addEventListener('click', () => { location.hash = 'calls/' + b.dataset.id; }));
+  if (selected) showCall(selected, true);
+}
+function showCall(id, soft = false) {
+  selected = id;
+  document.querySelectorAll('#callList .call-item').forEach(b => b.setAttribute('aria-selected', b.dataset.id === id));
+  const c = ALL.find(x => x.session_id === id);
+  const t = c && CLIENTS.find(x => x.id === c.client_id);
+  P.renderDetail($('detail'), c, { deliveries: DELIV, soft, agentName: (t && t.agent_name) || 'Agent', extraMeta: c ? `<b>${P.esc(clientName(c.client_id))}</b> · ` : '' });
 }
 
-function openEdit(id) {
-  const c = CLIENTS.find(x => x.id === id); if (!c) return;
-  document.getElementById('modalTitle').textContent = 'Edit ' + (c.name || c.id);
-  document.getElementById('f_id').value = c.id;
-  document.getElementById('f_name').value = c.name || '';
-  document.getElementById('f_slug').value = c.id;
-  document.getElementById('f_slug').disabled = true; // id is the key; don't change on edit
-  document.getElementById('f_language').value = c.language || 'hi';
-  document.getElementById('f_agent').value = c.agent_name || '';
-  document.getElementById('f_role_description').value = c.role_description || '';
-  document.getElementById('f_business_type').value = c.business_type || '';
-  document.getElementById('f_lead_fields').value = c.lead_fields || '';
-  document.getElementById('f_prompt').value = c.system_prompt || '';
-  document.getElementById('f_business').value = c.business_info || '';
-  document.getElementById('f_greeting').value = c.greeting || '';
-  document.getElementById('f_closing_instructions').value = c.closing_instructions || '';
-  document.getElementById('f_password').value = c.password || '';
-  document.getElementById('f_whatsapp').value = c.whatsapp_to || '';
-  document.getElementById('f_phone').value = c.phone_number || '';
-  document.getElementById('f_quota').value = c.minute_quota || 0;
-  document.getElementById('f_enforce').checked = !!c.enforce_quota;
-  document.getElementById('f_active').checked = c.active !== false;
-  document.getElementById('modalErr').textContent = '';
-  document.getElementById('overlay').classList.add('show');
+// ── Delivery ──
+function renderDelivery() {
+  $('dOk').textContent = P.num(DSTATS.delivered); $('dPend').textContent = P.num(DSTATS.pending); $('dDead').textContent = P.num(DSTATS.dead);
+  $('nDeliv').textContent = DSTATS.dead ? `${DSTATS.dead} failed` : '';
+  const st = { delivered: 'ok', pending: 'warn', dead: 'bad' }, label = { delivered: 'Delivered', pending: 'Retrying', dead: 'Gave up' };
+  const ch = { sheets: 'Google Sheet', whatsapp: 'WhatsApp', webhook: 'CRM webhook' };
+  if (!DELIV.length) { $('delivTable').innerHTML = `<tbody><tr><td class="empty"><b>${dStatus ? 'Nothing with this status' : 'Nothing queued yet'}</b>Leads are queued here the moment a call captures one.</td></tr></tbody>`; return; }
+  $('delivTable').innerHTML = `<thead><tr><th>Client</th><th>Lead</th><th>Sent to</th><th>Status</th><th class="r">Tries</th><th>Last error</th><th>Queued</th><th></th></tr></thead>
+  <tbody>${DELIV.map(d => {
+    let lead = {}; try { lead = JSON.parse(d.payload || '{}').lead || {}; } catch (_) {}
+    return `<tr><td>${P.esc(clientName(d.client_id))}</td><td>${P.esc(lead.name || '—')}</td>
+      <td>${ch[d.channel] || P.esc(d.channel)}<div class="stamp">${P.esc(d.destination || '')}</div></td>
+      <td><span class="badge ${st[d.status] || ''}">${label[d.status] || P.esc(d.status)}</span></td>
+      <td class="r mono">${d.attempts}</td><td class="wrap muted">${P.esc(d.last_error || '')}</td>
+      <td class="mono">${d.created_at ? P.ago(new Date(d.created_at * 1000).toISOString()) : '—'}</td>
+      <td class="r">${d.status !== 'delivered' ? `<button class="btn ghost sm" data-retry="${d.id}">Send again</button>` : ''}</td></tr>`;
+  }).join('')}</tbody>`;
+  $('delivTable').querySelectorAll('[data-retry]').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { await P.api(`/api/admin/deliveries/${b.dataset.retry}/retry`, { method: 'POST' }); P.toast('Queued to send again'); load(); }
+    catch (e) { P.toast(e.message, true); b.disabled = false; }
+  }));
 }
 
-function closeModal() { document.getElementById('overlay').classList.remove('show'); }
+// ── Client drawer ──
+const FIELDS = { f_name: 'name', f_business_type: 'business_type', f_agent: 'agent_name', f_language: 'language', f_role_description: 'role_description',
+  f_greeting: 'greeting', f_lead_fields: 'lead_fields', f_business: 'business_info', f_closing_instructions: 'closing_instructions', f_prompt: 'system_prompt',
+  f_whatsapp: 'whatsapp_to', f_sheet: 'sheet_id', f_webhook: 'webhook_url', f_phone: 'phone_number' };
+
+function tab(name) {
+  $('dTabs').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === name));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('on', p.dataset.pane === name));
+}
+$('dTabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) tab(b.dataset.tab); });
+$('presets').innerHTML = Object.keys(PRESETS).map(k => `<button class="btn ghost sm" type="button" data-p="${k}">${k}</button>`).join('');
+$('presets').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-p]'); if (!b) return;
+  const p = PRESETS[b.dataset.p];
+  $('f_business_type').value = p.business_type; $('f_role_description').value = p.role_description;
+  $('f_lead_fields').value = p.lead_fields; $('f_closing_instructions').value = p.closing_instructions;
+  P.toast(`${b.dataset.p} preset applied — check Script & knowledge too`);
+});
+function greetPreview() {
+  const name = $('f_agent').value || 'Riya';
+  const g = $('f_greeting').value || '(built-in greeting for ' + LANG[$('f_language').value] + ')';
+  $('greetPreview').innerHTML = `<span class="muted" style="font-size:12.5px">What callers hear first</span>` + P.transcriptHTML([{ role: 'assistant', content: g }], name);
+}
+['f_agent', 'f_greeting', 'f_language'].forEach(id => $(id).addEventListener('input', greetPreview));
+
+function openClient(id = null, startTab = 'agent') {
+  editing = id ? CLIENTS.find(x => x.id === id) : null;
+  const c = editing || {};
+  $('dTitle').textContent = editing ? (c.name || c.id) : 'Add client';
+  $('dSub').textContent = editing ? `${c.id} · ${P.num(c.calls)} calls · ${P.num(c.lead_count)} leads` : 'Set up the agent, then give the client a login.';
+  for (const [el, key] of Object.entries(FIELDS)) $(el).value = c[key] ?? '';
+  if (!editing) $('f_language').value = 'hi';
+  $('f_slug').value = c.id || ''; $('f_slug').disabled = !!editing;
+  $('f_password').value = ''; $('f_webhook_secret').value = '';
+  $('f_password').placeholder = c.password_set ? 'Leave blank to keep the current password' : 'Set a password';
+  $('pwState').textContent = c.password_set ? '· set' : '';
+  $('whState').textContent = c.webhook_secret_set ? '· set' : '';
+  $('f_quota').value = c.minute_quota || 0;
+  $('f_enforce').checked = !!c.enforce_quota;
+  $('f_active').checked = c.active !== false;
+  $('delBtn').hidden = !editing;
+  $('dTest').hidden = !editing;
+  if (editing) $('dTest').href = '/?client=' + encodeURIComponent(c.id);
+  $('dTabs').querySelector('[data-tab="calls"]').hidden = !editing;
+  $('dErr').textContent = '';
+  $('saveBtn').textContent = editing ? 'Save changes' : 'Add client';
+  greetPreview();
+  tab(editing ? startTab : 'agent');
+  if (editing) loadDrawerCalls(c.id);
+  $('scrim').classList.add('show'); $('drawer').classList.add('show');
+  setTimeout(() => $('drawer').querySelector('.tabpane.on input, .tabpane.on .call-item')?.focus(), 230);
+}
+function closeClient() { $('scrim').classList.remove('show'); $('drawer').classList.remove('show'); editing = null; }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('drawer').classList.contains('show')) closeClient(); });
+
+async function loadDrawerCalls(id) {
+  $('dCalls').innerHTML = '<div class="skeleton" style="margin:20px 0"></div><div class="skeleton"></div>';
+  try {
+    const d = await P.api('/api/admin/clients/' + encodeURIComponent(id) + '/calls');
+    drawerCalls = [...(d.active || []), ...(d.recent || [])];
+  } catch (e) { $('dCalls').innerHTML = `<div class="err">${P.esc(e.message)}</div>`; return; }
+  if (!drawerCalls.length) { $('dCalls').innerHTML = `<div class="empty"><b>No calls yet</b>Place a <a href="/?client=${encodeURIComponent(id)}" target="_blank">test call</a> to hear this agent.</div>`; return; }
+  $('dCalls').innerHTML = `<div class="actions" style="justify-content:flex-end;margin:14px 0 10px"><button class="btn ghost sm" id="dCsv">${P.icon('down')}Export leads</button></div>
+    <div class="panel call-list" style="max-height:none" id="dList">${drawerCalls.map(c => P.callItem(c, null)).join('')}</div>`;
+  $('dCsv').addEventListener('click', () => P.leadsCSV(drawerCalls, `${id}-leads.csv`));
+  $('dList').querySelectorAll('.call-item').forEach(b => b.addEventListener('click', () => { closeClient(); ALL.find(x => x.session_id === b.dataset.id) || ALL.push(drawerCalls.find(x => x.session_id === b.dataset.id)); location.hash = 'calls/' + b.dataset.id; }));
+}
 
 async function saveClient() {
-  const id = document.getElementById('f_id').value;
-  const body = {
-    name: document.getElementById('f_name').value.trim(),
-    language: document.getElementById('f_language').value,
-    agent_name: document.getElementById('f_agent').value.trim(),
-    role_description: document.getElementById('f_role_description').value.trim(),
-    business_type: document.getElementById('f_business_type').value.trim(),
-    lead_fields: document.getElementById('f_lead_fields').value.trim(),
-    system_prompt: document.getElementById('f_prompt').value,
-    business_info: document.getElementById('f_business').value,
-    greeting: document.getElementById('f_greeting').value,
-    closing_instructions: document.getElementById('f_closing_instructions').value,
-    password: document.getElementById('f_password').value,
-    whatsapp_to: document.getElementById('f_whatsapp').value.trim(),
-    phone_number: document.getElementById('f_phone').value.trim(),
-    minute_quota: parseInt(document.getElementById('f_quota').value || '0', 10),
-    enforce_quota: document.getElementById('f_enforce').checked,
-    active: document.getElementById('f_active').checked,
-  };
-  const slug = document.getElementById('f_slug').value.trim();
-  if (slug) body.id = slug;
-  const err = document.getElementById('modalErr');
-  err.textContent = '';
-  const url = id ? '/api/admin/clients/' + encodeURIComponent(id) : '/api/admin/clients';
-  const method = id ? 'PUT' : 'POST';
-  const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); err.textContent = d.detail || 'Save failed'; return; }
-  closeModal(); load();
+  const body = {};
+  for (const [el, key] of Object.entries(FIELDS)) body[key] = $(el).value.trim();
+  body.minute_quota = parseInt($('f_quota').value || '0', 10);
+  body.enforce_quota = $('f_enforce').checked;
+  body.active = $('f_active').checked;
+  body.password = $('f_password').value;
+  body.webhook_secret = $('f_webhook_secret').value;
+  const slug = $('f_slug').value.trim();
+  if (!editing && slug) body.id = slug;
+  if (!editing && !body.name && !slug) { $('dErr').textContent = 'Give the client a business name or a login ID.'; tab(body.name ? 'access' : 'agent'); return; }
+  if (!editing && !body.password) { $('dErr').textContent = 'Set a password so the client can sign in.'; tab('access'); return; }
+  $('saveBtn').disabled = true; $('dErr').textContent = '';
+  try {
+    const url = editing ? '/api/admin/clients/' + encodeURIComponent(editing.id) : '/api/admin/clients';
+    const r = await P.api(url, { method: editing ? 'PUT' : 'POST', body });
+    P.toast(editing ? 'Changes saved' : `Client added — they sign in as “${r.client.id}”`);
+    closeClient(); load();
+  } catch (e) { $('dErr').textContent = e.message; }
+  finally { $('saveBtn').disabled = false; }
+}
+async function deleteClient() {
+  if (!editing) return;
+  if (!confirm(`Delete ${editing.name || editing.id}? Their agent stops answering and they lose portal access. Past calls stay in the database.`)) return;
+  try { await P.api('/api/admin/clients/' + encodeURIComponent(editing.id), { method: 'DELETE' }); P.toast('Client deleted'); closeClient(); load(); }
+  catch (e) { $('dErr').textContent = e.message; }
 }
 
-async function del(id) {
-  if (!confirm('Delete client "' + id + '"? Their past calls remain in the database.')) return;
-  const res = await fetch('/api/admin/clients/' + encodeURIComponent(id), { method: 'DELETE' });
-  if (res.ok) load(); else alert('Delete failed');
-}
+// ── Wiring ──
+$('cq').addEventListener('input', renderClients);
+$('q').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); renderCalls(); });
+$('clientFilter').addEventListener('change', (e) => { clientFilter = e.target.value; renderCalls(); });
+$('filter').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; filter = b.dataset.f; $('filter').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); renderCalls(); });
+$('dFilter').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; dStatus = b.dataset.s; $('dFilter').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); load(); });
 
-// ── Calls drawer ──
-async function showCalls(id) {
-  const c = CLIENTS.find(x => x.id === id);
-  document.getElementById('callsTitle').textContent = 'Calls · ' + (c ? (c.name || c.id) : id);
-  document.getElementById('callsPanel').style.display = 'block';
-  document.getElementById('callsPanel').scrollIntoView({ behavior: 'smooth' });
-  const list = document.getElementById('callsList');
-  list.innerHTML = '<div class="empty">Loading…</div>';
-  const data = await fetch('/api/admin/clients/' + encodeURIComponent(id) + '/calls').then(r => r.json());
-  const calls = [...(data.active || []), ...(data.recent || [])];
-  if (!calls.length) { list.innerHTML = '<div class="empty">No calls yet for this client.</div>'; return; }
-  list.innerHTML = calls.map(renderCall).join('');
-}
-function hideCalls() { document.getElementById('callsPanel').style.display = 'none'; }
-
-function renderCall(c) {
-  const ld = c.lead_data || {};
-  const chips = Object.entries(ld).filter(([k, v]) => v && k !== 'notes').map(([k, v]) => {
-    const label = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-    return `<span class="chip"><b>${label}:</b> ${esc(v)}</span>`;
-  }).join('');
-  const when = c.created_at ? new Date(c.created_at).toLocaleString() : '—';
-  const dur = Math.round(c.duration_seconds || 0);
-  const audio = c.recording_path ? `<audio controls preload="none" src="/api/recordings/${encodeURIComponent(c.session_id)}"></audio>` : '';
-  return `<div class="call-card">
-    <div class="meta">${when} · ${dur}s · ${c.status}${c.lead_submitted ? ' · lead sent' : ''}</div>
-    ${c.summary ? `<div class="summary">${esc(c.summary)}</div>` : ''}
-    ${chips ? `<div class="lead-chips">${chips}</div>` : ''}
-    ${audio}
-  </div>`;
-}
-
-(async () => { if (await guard()) load(); })();
-setInterval(() => { if (document.getElementById('overlay').classList.contains('show')) return; load(); }, 10000);
+(async () => {
+  P.mountChrome();
+  if (!await P.guard('admin')) return;
+  await load().catch(e => P.toast(e.message, true));
+  P.router((v, arg) => { view = v; if (v === 'calls' && arg) showCall(arg); });
+  P.poll(() => { if (!$('drawer').classList.contains('show')) load().catch(() => {}); }, 5000);
+})();
 </script>
 </body>
 </html>

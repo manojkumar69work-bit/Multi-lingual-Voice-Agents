@@ -159,6 +159,60 @@ const P = (() => {
     return '<span class="badge">No lead</span>';
   }
 
+  // ── Call detail pane (shared by client + admin) ──
+  function renderDetail(el, c, { deliveries = [], soft = false, agentName = 'Agent', extraMeta = '' } = {}) {
+    if (!c) { el.innerHTML = '<div class="empty"><b>Call not found</b>It may have been removed.</div>'; el.dataset.id = ''; return; }
+    // Don't redraw an unchanged call on every poll — it would reset the audio player.
+    if (soft && el.dataset.id === c.session_id && el.dataset.v === String(c.updated_at)) return;
+    const tq = (el.dataset.id === c.session_id && el.querySelector('#tq')?.value) || '';
+    el.dataset.id = c.session_id; el.dataset.v = String(c.updated_at);
+
+    const ld = leadOf(c);
+    const phone = ld.phone || ld.phone_number || ld.contact || c.caller_phone || '';
+    const digits = String(phone).replace(/[^\d+]/g, '');
+    const wa = digits.replace(/^\+/, '').replace(/^(?=[6-9]\d{9}$)/, '91');
+    const rec = '/api/recordings/' + encodeURIComponent(c.session_id);
+    el.innerHTML = `
+      <div class="detail-head">
+        <div><h3>${esc(callTitle(c))}</h3>
+          <div class="meta">${extraMeta}${when(c.created_at)} · ${dur(c.duration_seconds)}${c.caller_phone ? ' · <span class="mono">' + esc(c.caller_phone) + '</span>' : ''}</div></div>
+        <div class="actions">${deliveryBadge(c, deliveries)}</div>
+      </div>
+      ${c.summary ? `<p class="summary">${esc(c.summary)}</p>` : c.status === 'active' ? '<p class="summary muted">The summary is written when the call ends.</p>' : ''}
+      ${c.error ? `<div class="notes" style="border-color:var(--bad)">Call error: ${esc(c.error)}</div>` : ''}
+      ${hasLead(c) ? `<div class="block-label">What the agent captured</div>${factsHTML(c)}` : ''}
+      <div class="actions" style="margin-top:14px">
+        ${digits.length >= 10 ? `<a class="btn sm" href="tel:${esc(digits)}">${icon('calls')}Call back</a>
+          <a class="btn ghost sm" target="_blank" rel="noopener" href="https://wa.me/${esc(wa)}">WhatsApp</a>` : ''}
+        ${hasLead(c) ? '<button class="btn ghost sm" data-copy>Copy lead</button>' : ''}
+      </div>
+      <div class="block-label"><span>Conversation · ${(c.transcript || []).length} turns · caller spoke ${talkShare(c.transcript)}%</span>
+        <span class="key" style="text-transform:none;letter-spacing:0;font-weight:400"><span style="--c:var(--caller)">Caller</span><span style="--c:var(--agent)">Agent</span></span></div>
+      ${strip(c.transcript, { tall: true })}
+      ${c.recording_path && c.status !== 'active' ? `<div class="block-label"><span>Recording</span><a class="muted" style="text-transform:none;letter-spacing:0;font-weight:400" href="${rec}" download>Download</a></div>
+        <audio controls preload="none" src="${rec}"></audio>` : ''}
+      <div class="block-label"><span>Transcript</span></div>
+      <label class="search" style="margin:0 0 12px"><span class="sr-only">Find in transcript</span>${icon('search')}<input id="tq" type="search" placeholder="Find in this call" value="${esc(tq)}"/></label>
+      <div data-tbody>${transcriptHTML(c.transcript, agentName, tq)}</div>`;
+    wireStrip(el);
+    if (!soft && innerWidth <= 1080) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.querySelector('#tq').addEventListener('input', (e) => { el.querySelector('[data-tbody]').innerHTML = transcriptHTML(c.transcript, agentName, e.target.value.trim()); });
+    el.querySelector('[data-copy]')?.addEventListener('click', async () => {
+      const text = Object.entries(ld).filter(([, v]) => v).map(([k, v]) => `${title(k)}: ${v}`).join('\n');
+      try { await navigator.clipboard.writeText(text); toast('Lead copied'); } catch (_) { toast('Copy failed — select the text instead', true); }
+    });
+  }
+
+  function callItem(c, selectedId, extra = '') {
+    const live = c.status === 'active';
+    return `<button class="call-item" role="option" data-id="${esc(c.session_id)}" aria-selected="${selectedId === c.session_id}">
+      <span class="t1">${esc(callTitle(c))}</span>
+      <span class="when">${live ? '<span class="dot-live">Live</span>' : ago(c.created_at)}</span>
+      <span class="t2">${extra}${esc(callLine(c))} · ${dur(c.duration_seconds)}</span>
+      ${strip(c.transcript, { label: false })}
+    </button>`;
+  }
+
   // ── Bar chart: calls per day (single series, hover tooltip, table fallback) ──
   // Days ending today; if nothing happened in that window, end at the latest call
   // instead so the chart shows the most recent activity rather than a flat line.
@@ -303,6 +357,6 @@ const P = (() => {
 
   return { GLYPH, icon, esc, api, guard, logout, dur, clock, mins, num, ago, when, title,
     leadOf, hasLead, leadName, callTitle, callLine, completeness, strip, talkShare,
-    transcriptHTML, wireStrip, factsHTML, deliveryBadge, perDay, barChart,
+    transcriptHTML, wireStrip, factsHTML, deliveryBadge, renderDetail, callItem, perDay, barChart,
     router, toast, mountChrome, downloadCSV, leadsCSV, poll };
 })();

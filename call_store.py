@@ -157,7 +157,11 @@ def _month_start_epoch() -> float:
 
 
 def client_stats(client_id: str) -> dict:
-    """Aggregate stats for a single client (business)."""
+    """Aggregate stats for a single client (business).
+
+    lead_count counts calls whose lead has at least one non-empty field other
+    than notes — `lead_extracted` is set even when extraction returned all
+    blanks, so summing it overstated leads."""
     conn = _get_conn()
     month0 = _month_start_epoch()
     row = conn.execute(
@@ -165,7 +169,7 @@ def client_stats(client_id: str) -> dict:
         SELECT
             COUNT(*)                                              AS calls,
             COALESCE(SUM(CASE WHEN status='active' THEN 1 ELSE 0 END), 0)      AS active,
-            COALESCE(SUM(lead_extracted), 0)                      AS lead_count,
+            COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM json_each(lead_data) WHERE key != 'notes' AND TRIM(value) != '') THEN 1 ELSE 0 END), 0) AS lead_count,
             COALESCE(SUM(duration_seconds), 0)                    AS total_seconds,
             COALESCE(SUM(CASE WHEN created_at >= ? THEN duration_seconds ELSE 0 END), 0)
                                                                   AS month_seconds
@@ -189,7 +193,7 @@ def all_client_stats() -> dict[str, dict]:
             client_id,
             COUNT(*)                                              AS calls,
             COALESCE(SUM(CASE WHEN status='active' THEN 1 ELSE 0 END), 0)      AS active,
-            COALESCE(SUM(lead_extracted), 0)                      AS lead_count,
+            COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM json_each(lead_data) WHERE key != 'notes' AND TRIM(value) != '') THEN 1 ELSE 0 END), 0) AS lead_count,
             COALESCE(SUM(duration_seconds), 0)                    AS total_seconds,
             COALESCE(SUM(CASE WHEN created_at >= ? THEN duration_seconds ELSE 0 END), 0)
                                                                   AS month_seconds

@@ -17,3 +17,5 @@ indic-transliteration
 livekit-agents
 livekit-plugins-silero
 livekit-plugins-openai
+livekit-plugins-sarvam      # saaras codemix STT for hi/te
+livekit-plugins-smallestai  # second TTS provider (fallback)

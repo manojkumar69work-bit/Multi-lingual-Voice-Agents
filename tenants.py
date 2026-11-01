@@ -12,6 +12,10 @@ the dispatch rule can route by called-number → client. Until then it is unused
 The store is a JSON file (tenants.json). The admin portal performs CRUD through
 upsert_tenant / delete_tenant, which persist to JSON and hot-reload the registry.
 The default tenant is used when metadata is missing/unknown/malformed.
+
+`mode` selects which built-in persona a tenant gets when its system_prompt is
+blank: "business" (the lead-capturing assistant) or "chat" (an open conversation
+partner, with no lead capture). Both exist in every supported language.
 """
 import json
 import logging
@@ -35,11 +39,20 @@ _WRITE_LOCK = threading.Lock()
 #   "te"  — Telugu
 #   "en"  — English
 # The TTS service picks a native voice for each language automatically.
+#
+# `mode` is one of:
+#   "business" — the lead-capturing assistant for a client's business  ← default
+#   "chat"     — an open conversation partner: no business scope, no lead capture.
+#                The built-in prompt and greeting exist for all three languages.
+MODES = ("business", "chat")
+
+
 @dataclass
 class TenantConfig:
     id: str = "default"                 # stable slug — primary key & login username
     name: str = ""                      # Agency name (display)
     language: str = "hi"                # "hi" | "te" | "en"
+    mode: str = "business"              # "business" | "chat"
     agent_name: str = "Riya"            # Name the AI agent uses on the call
     system_prompt: str = ""             # Custom LLM prompt; blank → built-in template
     business_info: str = ""             # Knowledge base of business facts; injected into LLM
@@ -115,6 +128,9 @@ def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
         id=tid,
         name=d.get("name", ""),
         language=d.get("language", "hi"),
+        # Unknown values fall back to the business assistant rather than a
+        # tenant that silently gets no scope guard.
+        mode=(d.get("mode") or "business") if (d.get("mode") or "business") in MODES else "business",
         agent_name=d.get("agent_name", "Riya"),
         system_prompt=d.get("system_prompt", ""),
         business_info=d.get("business_info", ""),

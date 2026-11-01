@@ -122,6 +122,7 @@ class ClientUpsert(BaseModel):
     id: str | None = None
     name: str | None = None
     language: str | None = None
+    mode: str | None = None
     agent_name: str | None = None
     system_prompt: str | None = None
     business_info: str | None = None

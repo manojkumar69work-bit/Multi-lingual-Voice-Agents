@@ -1,12 +1,12 @@
 from __future__ import annotations
-"""LiveKit voice agent — real-time phone calls with Groq STT+LLM and Sarvam/Edge TTS.
+"""LiveKit voice agent — real-time phone calls with Sarvam/Groq STT+LLM and Sarvam/Smallest/Edge TTS.
 
 Architecture:
   Phone caller → SIP trunk → LiveKit Server → This agent
                                                ├── Silero VAD
-                                               ├── Groq Whisper (STT)
-                                               ├── Groq Llama  (LLM)
-                                               └── Sarvam → Edge TTS (TTS)
+                                               ├── STT: Sarvam saaras codemix (hi/te) → Groq Whisper
+                                               ├── LLM: Sarvam (hi/te) → Groq gpt-oss
+                                               └── TTS: Sarvam → Smallest.ai → Edge
 """
 from dotenv import load_dotenv
 
@@ -24,12 +24,14 @@ import time
 import wave
 
 import httpx
+from openai import AsyncOpenAI
 from livekit import rtc
 import call_store
 import lead_delivery
 import tenants
 from recorder import CallRecorder
 from livekit.agents import (
+    APIConnectionError,
     AutoSubscribe,
     JobContext,
     JobProcess,
@@ -43,7 +45,7 @@ from livekit.agents import (
 )
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
 from livekit.agents.voice import Agent, AgentSession
-from livekit.plugins import openai, silero
+from livekit.plugins import openai, sarvam, silero, smallestai
 
 logger = logging.getLogger("voice-agent")
 logging.basicConfig(level=logging.INFO)
@@ -141,12 +143,35 @@ to_hinglish = romanize
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_BASE = "https://api.groq.com/openai/v1"
-CHAT_MODEL = os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile")
+# Groq retired llama-3.3-70b-versatile. gpt-oss is a reasoning model, so the live
+# call runs it at low effort to keep time-to-first-word under a second.
+CHAT_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
 
 # STT model. `whisper-large-v3` is markedly more accurate on Indic languages
 # (esp. Telugu) than `...-turbo`; turbo is faster but mishears more. Override
 # with STT_MODEL in .env.
 STT_MODEL = os.environ.get("STT_MODEL", "whisper-large-v3")
+
+# Sarvam handles the Indic calls end to end where it is stronger than Groq:
+#   - STT: saaras in `codemix` mode streams, and transcribes Telugu far better
+#     than Whisper. saaras:v3 keeps English words in Latin ("weekend plans",
+#     "office"), the same register the prompts ask the agent for; saaras:v4
+#     writes them in native script (వీకెండ్ ప్లాన్స్), so v3 is the default.
+#   - LLM: sarvam-105b-conversations writes natural spoken Telugu where gpt-oss
+#     slips into wrong forms and broken English mixing, and starts in ~0.15 s.
+# Groq stays behind both as the fallback, and English calls stay on Groq.
+# Set SARVAM_STT_MODEL= or SARVAM_LLM_MODEL= (empty) to turn either off.
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
+SARVAM_BASE = "https://api.sarvam.ai/v1"
+SARVAM_STT_MODEL = os.environ.get("SARVAM_STT_MODEL", "saaras:v3")
+SARVAM_LLM_MODEL = os.environ.get("SARVAM_LLM_MODEL", "sarvam-105b-conversations")
+SARVAM_LANGS = {"hi", "te"}
+
+# Smallest.ai Lightning: the second TTS provider, between Sarvam and Edge, so a
+# Sarvam outage still sounds like a natural Indian voice. Skipped without a key.
+SMALLEST_API_KEY = os.environ.get("SMALLEST_API_KEY", "")
+SMALLEST_MODEL = os.environ.get("SMALLEST_MODEL", "lightning_v3.1_pro")
+SMALLEST_VOICE = os.environ.get("SMALLEST_VOICE", "aashi")
 
 LOCAL_TTS_URL = os.environ.get("LOCAL_TTS_URL", "http://localhost:8002")
 LOCAL_TTS_TIMEOUT = float(os.environ.get("LOCAL_TTS_TIMEOUT", "30"))
@@ -166,6 +191,8 @@ TTS_PACE_BY_LANG = {"te": float(os.environ.get("TTS_PACE_TE", "0.95"))}
 # governs prosodic variation: too low reads flat and identical every turn, too
 # high wanders in pitch and energy mid-sentence.
 TTS_TEMPERATURE = float(os.environ.get("TTS_TEMPERATURE", "0.6"))
+# English chat reads flat at 0.6; a little more variation sounds conversational.
+TTS_TEMPERATURE_BY_LANG = {"en": float(os.environ.get("TTS_TEMPERATURE_EN", "0.8"))}
 
 # Shared with tts_server.py, which streams PCM at this rate.
 TTS_SAMPLE_RATE = int(os.environ.get("TTS_SAMPLE_RATE", "24000"))
@@ -216,7 +243,15 @@ _STYLE_HINT = (
     "- Keep every reply to one or two short sentences. Never read a list out loud.\n"
     "- Warmly acknowledge what the caller said, then ask only ONE thing at a time.\n"
     "- Sound professional and helpful.\n"
-    "- If they ask something, answer concisely first, then gently continue the conversation."
+    "- If they ask something, answer concisely first, then gently continue the conversation.\n"
+    # Every voice is female, and Hindi and Telugu verbs carry gender: without
+    # this the LLM defaults to male forms ("karta hoon"), which gives her away.
+    "- You are a woman. Always use feminine forms for yourself: Hindi 'main karti hoon', "
+    "'main bata rahi hoon', 'samajh gayi', never 'karta hoon', 'bata raha hoon' or 'samajh gaya'; "
+    "Telugu 'అమ్మాయిని', 'చెప్పేదాన్ని', never 'అబ్బాయిని' or 'చెప్పేవాడ్ని'.\n"
+    "- The caller's words reach you through speech recognition and may be misheard. "
+    "Never correct their spelling or words. If a line does not make sense, briefly ask "
+    "what they meant instead of guessing."
 )
 
 # Strict role lock — applied to every language variant so the agent never
@@ -289,16 +324,23 @@ def build_system_prompt(tenant) -> str:
             f"'ఆ', 'అవును', 'సరే', 'ఓకే', 'మంచిది', 'అలాగే', 'మరి', 'అయితే', 'ఇంకా', 'ఓహ్', 'అచ్చా', "
             f"'చూడండి'. Start replies warmly with little acknowledgements like 'ఆ సరే అండి', "
             f"'మంచిది అండి', 'ఓకే అండి'.\n"
-            f"5. Naturally blend in the common English words everyday Telugu speakers mix in, and "
-            f"write them in plain ENGLISH letters, not in Telugu script: appointment, time, free, "
-            f"help, message, confirm, budget, location, site visit, ready to move, home loan, EMI. "
-            f"So write 'మీ budget ఎంత అండి?' — never 'మీ బడ్జెట్ ఎంత అండి?'. Mixing English like "
-            f"this is NORMAL and sounds natural; forcing a bookish Telugu word where everyone says "
-            f"the English one is what sounds fake.\n"
+            f"5. The grammar is always correct Telugu: sentence structure, verbs and endings stay "
+            f"Telugu. Use English only for the single nouns everyday Telugu speakers really say in "
+            f"English, written in plain ENGLISH letters, not Telugu script: appointment, time, "
+            f"budget, location, site visit, ready to move, home loan, EMI, message. So write "
+            f"'మీ budget ఎంత అండి?' — never 'మీ బడ్జెట్ ఎంత అండి?'. An English action word is fine "
+            f"only in the everyday 'word + చేయడం' form ('confirm చేస్తాను', 'call చేస్తాం'). Never "
+            f"put a bare English verb, adjective or phrase inside a Telugu sentence.\n"
+            f"   Wrong: 'మీకు ఏ location most like?', 'నేను trying different options', "
+            f"'budget ఎంత ఉండుతుంది?'.\n"
+            f"   Right: 'మీకు ఏ location ఇష్టం అండి?', 'వేరే options కూడా చూద్దాం', "
+            f"'budget ఎంత ఉంటుంది అండి?'.\n"
+            f"   Forcing a bookish Telugu word where everyone says the English noun sounds fake; "
+            f"broken Telugu grammar sounds fake too.\n"
             f"6. Keep sentences short, casual and flowing — like real talk, not announcements.\n"
-            f"7. End sentences smoothly and politely with warm human markers like '~అండి' (andi) for "
-            f"respect, '~గా' (ga), or '~కదా' (kada). Never end abruptly or harshly. But do NOT stack "
-            f"'అండి' onto a word that already ends in '~అండి' — say 'చెప్పండి', never 'చెప్పండి అండి'. "
+            f"7. End sentences smoothly and politely with warm human markers like 'అండి' (andi) for "
+            f"respect, 'గా' (ga), or 'కదా' (kada). Never end abruptly or harshly. But do NOT stack "
+            f"'అండి' onto a word that already ends in 'అండి' — say 'చెప్పండి', never 'చెప్పండి అండి'. "
             f"One politeness marker per sentence is enough.\n"
             f"8. Keep your tone warm, friendly, relaxed and patient — like chatting with a neighbour "
             f"you want to help, not like reading a script.\n"
@@ -313,9 +355,9 @@ def build_system_prompt(tenant) -> str:
             f"  You:    \"ఆ సరే అండి! 3 BHK కి మీ budget ఎంత అనుకుంటున్నారు?\"\n"
             f"  Caller: \"ఓ 80 లక్షల దాకా.\"\n"
             f"  You:    \"మంచిది అండి. మరి location ఏదైనా అనుకున్నారా?\"\n"
-            f"  Caller: \"Gachibowli side lo chusthunna.\"\n"
+            f"  Caller: \"Gachibowli side చూస్తున్నా.\"\n"
             f"  You:    \"ఓకే అండి, Gachibowli అయితే మంచి options ఉన్నాయి. "
-            f"ఒక site visit కి time cheppagalara?\"\n"
+            f"ఒక site visit కి time చెప్పగలరా?\"\n"
             f"Notice: short lines, 'అండి' once per sentence, English words in English "
             f"letters, and not a single bookish word.\n\n"
             f"{_STYLE_HINT}\n\n"
@@ -374,8 +416,8 @@ def build_system_prompt(tenant) -> str:
         f"'theek hai', 'haan ji', 'arre waah', 'samajh gayi'. Open replies warmly — 'Ji bilkul', "
         f"'Achha ji', 'Theek hai ji'.\n"
         f"5. Keep sentences short, casual and flowing — like real talk, not an announcement.\n"
-        f"6. End politely with warm markers like '~ji' where it fits, but only ONE politeness "
-        f"marker per sentence — never stack them.\n"
+        f"6. End politely with a warm 'ji' where it fits, but only ONE politeness marker per "
+        f"sentence — never stack them.\n"
         f"7. Write numbers, times and prices as DIGITS (10:30, 2 BHK, 50 lakh) — never spell them "
         f"out in words. The voice reads digits correctly and spelled-out numerals sound "
         f"like a news bulletin.\n\n"
@@ -440,7 +482,7 @@ _STT_HALLUCINATIONS = {
 
 
 def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str,
-                      lang: str = "hi") -> str:
+                      lang: str = "hi", mode: str = "business") -> str:
     """Vocabulary-biasing prompt for Whisper. Nudges the decoder toward the names,
     brand terms and domain words a caller is likely to use, so they get transcribed
     exactly instead of guessed phonetically. Whisper only reads ~224 tokens of
@@ -449,7 +491,15 @@ def _build_stt_prompt(agent_name: str, business_info: str, tenant_name: str,
     The prompt must be written in the SAME script the audio will be transcribed in.
     Whisper copies the prompt's script and register into its output, so an English
     prompt on a Telugu call pushes the decoder toward English/romanized guesses —
-    which is exactly the mishearing we're trying to prevent."""
+    which is exactly the mishearing we're trying to prevent.
+
+    Open-chat tenants get casual vocabulary instead: biasing a chat about movies
+    and cricket toward "AI automation, demo, pricing" makes Whisper hear business
+    words that were never said."""
+    if mode == "chat":
+        return _CHAT_STT_BIAS.get(lang, _CHAT_STT_BIAS["hi"]).format(
+            agent_name=agent_name or "Riya"
+        )
     if lang == "te":
         parts = [
             f"{tenant_name} కస్టమర్ కాల్." if tenant_name else "కస్టమర్ సపోర్ట్ కాల్.",
@@ -600,6 +650,26 @@ class GroqSTT(aistt.STT):
         )
 
 
+def build_stt(tenant, vad) -> aistt.STT:
+    """Sarvam saaras (codemix, streaming) for Hindi and Telugu, Groq Whisper behind it.
+
+    English, and any call without a Sarvam key, stays on Whisper alone."""
+    whisper = GroqSTT(
+        default_language=tenant.language,
+        bias_prompt=_build_stt_prompt(
+            tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name,
+            tenant.language, mode=getattr(tenant, "mode", "business"),
+        ),
+    )
+    if tenant.language not in SARVAM_LANGS or not (SARVAM_API_KEY and SARVAM_STT_MODEL):
+        return whisper
+    codemix = sarvam.STT(
+        api_key=SARVAM_API_KEY, language=f"{tenant.language}-IN",
+        model=SARVAM_STT_MODEL, mode="codemix",
+    )
+    return aistt.FallbackAdapter([codemix, whisper], vad=vad)
+
+
 def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int) -> bytes:
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
@@ -610,9 +680,9 @@ def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int) -> bytes:
     return buf.getvalue()
 
 
-# ─── Custom TTS: Sarvam → Edge fallback via local service ────────────────────
+# ─── TTS chain: Sarvam (local service) → Smallest.ai → Edge ──────────────────
 
-# Edge TTS voice per language (used only if the local TTS service is down).
+# Edge TTS voice per language (the last link of the chain).
 # All three are Indian-accent female voices, so a fallback mid-call is a drop in
 # quality rather than a jarring change of person. The English slot used to be
 # en-US-GuyNeural — an American man standing in for a female Indian persona.
@@ -624,7 +694,15 @@ _EDGE_VOICE_BY_LANG = {
 
 
 class VoiceTTS(aitts_tts.TTS):
-    def __init__(self, language: str = "hi", recorder=None):
+    """One link of the TTS chain built by build_tts().
+
+    provider="sarvam" streams Sarvam through the local TTS service; "edge" calls
+    Edge TTS directly. Each raises when it produces no audio, so the
+    FallbackAdapter moves on to the next link instead of the caller hearing
+    silence — and never re-speaks a reply that already started playing.
+    """
+
+    def __init__(self, language: str = "hi", provider: str = "sarvam"):
         super().__init__(
             capabilities=aitts_tts.TTSCapabilities(streaming=False),
             # Must match what the TTS service streams — both read TTS_SAMPLE_RATE,
@@ -633,7 +711,8 @@ class VoiceTTS(aitts_tts.TTS):
             num_channels=1,
         )
         self._language = language
-        self._recorder = recorder  # optional CallRecorder for the agent-speech track
+        self._provider = provider
+        self._label = f"VoiceTTS.{provider}"
 
     def synthesize(
         self,
@@ -662,22 +741,28 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
 
         lang = self._tts._language
         pace = TTS_PACE_BY_LANG.get(lang, TTS_PACE)
+        temperature = TTS_TEMPERATURE_BY_LANG.get(lang, TTS_TEMPERATURE)
 
-        def _emit(pcm: bytes) -> None:
+        if self._tts._provider == "edge":
+            pcm = await _edge_tts_pcm(text, lang, pace)
+            if not pcm:
+                raise APIConnectionError("Edge TTS returned no audio")
             output_emitter.push(pcm)
-            if self._tts._recorder is not None:
-                self._tts._recorder.add_agent_pcm(pcm, self._tts.sample_rate)
+            output_emitter.flush()
+            output_emitter.end_input()
+            return
 
-        # Primary: local TTS streaming endpoint. It relays one continuous Sarvam
-        # WebSocket stream per reply, so prosody carries across sentence
-        # boundaries and audio starts before the whole reply is synthesized.
+        # Local TTS streaming endpoint. It relays one continuous Sarvam WebSocket
+        # stream per reply, so prosody carries across sentence boundaries and
+        # audio starts before the whole reply is synthesized.
         #
         # The response format is declared in X-TTS-Format rather than sniffed:
         #   pcm_s16le  — raw PCM, pushed straight through (no ffmpeg at all)
         #   wav_chunks — the service's fallback path: one WAV per sentence, which
         #                still needs framing and decoding
+        pushed = 0
+        fmt = ""
         try:
-            pushed = 0
             timeout = httpx.Timeout(LOCAL_TTS_TIMEOUT, connect=5.0)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream(
@@ -687,7 +772,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                         "text": text,
                         "language": lang,
                         "pace": pace,
-                        "temperature": TTS_TEMPERATURE,
+                        "temperature": temperature,
                     },
                 ) as resp:
                     if resp.status_code == 200:
@@ -695,7 +780,7 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                         if fmt == "pcm_s16le":
                             async for data in resp.aiter_bytes():
                                 if data:
-                                    _emit(data)
+                                    output_emitter.push(data)
                                     pushed += len(data)
                         else:
                             buffer = bytearray()
@@ -714,58 +799,83 @@ class VoiceTTSChunkedStream(aitts_tts.ChunkedStream):
                                 while emitted < len(tasks) and tasks[emitted].done():
                                     pcm = tasks[emitted].result()
                                     if pcm:
-                                        _emit(pcm)
+                                        output_emitter.push(pcm)
                                         pushed += len(pcm)
                                     emitted += 1
                             # Drain the remaining conversions in order.
                             for task in tasks[emitted:]:
                                 pcm = await task
                                 if pcm:
-                                    _emit(pcm)
+                                    output_emitter.push(pcm)
                                     pushed += len(pcm)
-            if pushed:
-                output_emitter.flush()
-                output_emitter.end_input()
-                logger.info(
-                    f"TTS (local /stream fmt={fmt}, lang={lang}, pace={pace}): "
-                    f"{len(text)} chars -> {pushed} PCM bytes"
-                )
-                return
+                    else:
+                        logger.warning(f"Local TTS stream returned HTTP {resp.status_code}")
         except Exception as e:
-            logger.warning(f"Local TTS stream unavailable: {e}")
-
-        # Fallback: direct Edge TTS (slower, but always available).
-        try:
-            import edge_tts
-            # edge-tts wants a signed percentage string ("+10%" / "-5%") and
-            # validates it, so both of the old expression's branches raised:
-            # hardcoding the "+" built "+-5%" for any pace below 1.0 (every
-            # Telugu call — TTS_PACE_TE defaults to 0.95), and `else None` was
-            # rejected outright ("rate must be str") at pace 1.0, the default
-            # for hi and en. Either way the except below swallowed it and the
-            # caller heard silence on the one path meant to prevent exactly that.
-            pct = int(round((pace - 1) * 100)) if pace else 0
-            rate = f"{pct:+d}%"
-            edge_voice = _EDGE_VOICE_BY_LANG.get(lang, _EDGE_VOICE_BY_LANG["hi"])
-            communicate = edge_tts.Communicate(text, voice=edge_voice, rate=rate)
-            mp3_data = bytearray()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    mp3_data.extend(chunk["data"])
-
-            if mp3_data:
-                pcm = await _ffmpeg_to_pcm(bytes(mp3_data))
-                if pcm:
-                    _emit(pcm)
-                    logger.info(
-                        f"TTS (Edge, lang={lang}, voice={edge_voice}, rate={rate}): "
-                        f"{len(text)} chars -> {len(pcm)} PCM bytes"
-                    )
-        except Exception as e:
-            logger.error(f"Edge TTS failed: {e}")
+            raise APIConnectionError(f"Local TTS stream failed: {e}") from e
+        if not pushed:
+            raise APIConnectionError("Local TTS stream returned no audio")
 
         output_emitter.flush()
         output_emitter.end_input()
+        logger.info(
+            f"TTS (local /stream fmt={fmt}, lang={lang}, pace={pace}): "
+            f"{len(text)} chars -> {pushed} PCM bytes"
+        )
+
+
+async def _edge_tts_pcm(text: str, lang: str, pace: float) -> bytes | None:
+    """Synthesize with Edge TTS and decode to raw PCM, or None on failure."""
+    try:
+        import edge_tts
+        # edge-tts wants a signed percentage string ("+10%" / "-5%") and
+        # validates it, so both of the old expression's branches raised:
+        # hardcoding the "+" built "+-5%" for any pace below 1.0 (every
+        # Telugu call — TTS_PACE_TE defaults to 0.95), and `else None` was
+        # rejected outright ("rate must be str") at pace 1.0, the default
+        # for hi and en. Either way the except below swallowed it and the
+        # caller heard silence on the one path meant to prevent exactly that.
+        pct = int(round((pace - 1) * 100)) if pace else 0
+        rate = f"{pct:+d}%"
+        edge_voice = _EDGE_VOICE_BY_LANG.get(lang, _EDGE_VOICE_BY_LANG["hi"])
+        communicate = edge_tts.Communicate(text, voice=edge_voice, rate=rate)
+        mp3_data = bytearray()
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3_data.extend(chunk["data"])
+        if not mp3_data:
+            return None
+        pcm = await _ffmpeg_to_pcm(bytes(mp3_data))
+        if pcm:
+            logger.info(
+                f"TTS (Edge, lang={lang}, voice={edge_voice}, rate={rate}): "
+                f"{len(text)} chars -> {len(pcm)} PCM bytes"
+            )
+        return pcm
+    except Exception as e:
+        logger.error(f"Edge TTS failed: {e}")
+        return None
+
+
+def build_tts(language: str) -> aitts_tts.TTS:
+    """Sarvam (local service) → Smallest.ai Aashi → Edge, one sentence at a time.
+
+    The old chain lived inside VoiceTTS: if Sarvam failed halfway through a
+    reply, Edge re-spoke the whole reply from the start. FallbackAdapter stops
+    at the first link that produced audio, and later sentences go straight to
+    the next healthy provider while it probes the failed one in the background.
+    Retries are off: a hung link should hand over, not be tried three times.
+    """
+    pace = TTS_PACE_BY_LANG.get(language, TTS_PACE)
+    chain: list[aitts_tts.TTS] = [VoiceTTS(language, provider="sarvam")]
+    if SMALLEST_API_KEY:
+        chain.append(smallestai.TTS(
+            api_key=SMALLEST_API_KEY, model=SMALLEST_MODEL, voice_id=SMALLEST_VOICE,
+            language=language, sample_rate=TTS_SAMPLE_RATE, speed=pace,
+        ))
+    chain.append(VoiceTTS(language, provider="edge"))
+    return aitts_tts.StreamAdapter(
+        tts=aitts_tts.FallbackAdapter(chain, max_retry_per_tts=0), text_pacing=True
+    )
 
 
 def _take_wav(buf: bytearray) -> bytes | None:
@@ -939,6 +1049,44 @@ async def submit_lead(lead: dict, tenant, session_id: str = ""):
 
 # ─── LiveKit Agent ──────────────────────────────────────────────────────────
 
+def build_llm(language: str) -> aitts.LLM:
+    """Sarvam first for Hindi and Telugu, Groq gpt-oss behind it; Groq alone for English.
+
+    Sarvam gets no SDK retries and a 15 s cap, so a failure hands the turn to
+    Groq at once instead of the caller waiting out three attempts."""
+    groq = openai.LLM(
+        model=CHAT_MODEL, base_url=GROQ_BASE, api_key=GROQ_API_KEY,
+        **({"reasoning_effort": "low"} if "gpt-oss" in CHAT_MODEL else {}),
+    )
+    if language not in SARVAM_LANGS or not (SARVAM_API_KEY and SARVAM_LLM_MODEL):
+        return groq
+    indic = openai.LLM(
+        model=SARVAM_LLM_MODEL,
+        client=AsyncOpenAI(
+            base_url=SARVAM_BASE, api_key=SARVAM_API_KEY, max_retries=0, timeout=15,
+            default_headers={"api-subscription-key": SARVAM_API_KEY},
+        ),
+    )
+    return aitts.FallbackAdapter([indic, groq])
+
+
+class VoiceAgent(Agent):
+    """Agent that copies every frame it speaks into the call recording.
+
+    Recording here rather than inside one TTS provider means the recording
+    keeps the agent's side whichever link of the TTS chain spoke it."""
+
+    def __init__(self, *, recorder=None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._recorder = recorder
+
+    async def tts_node(self, text, model_settings):
+        async for frame in Agent.default.tts_node(self, text, model_settings):
+            if self._recorder is not None:
+                self._recorder.add_agent_pcm(bytes(frame.data), frame.sample_rate)
+            yield frame
+
+
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
@@ -1009,8 +1157,6 @@ async def entrypoint(ctx: JobContext):
         if track.kind == rtc.TrackKind.KIND_AUDIO:
             asyncio.create_task(_record_caller_track(track))
 
-    from livekit.agents.tts import StreamAdapter
-
     # Semantic turn detection, where the model has been trained for the language.
     # The local detector ships per-language thresholds for hi (and en) but not te,
     # so Telugu stays on VAD-only endpointing rather than being scored against a
@@ -1046,12 +1192,15 @@ async def entrypoint(ctx: JobContext):
     if use_turn_detector:
         turn_handling["turn_detection"] = turn_detector
 
+    # Open chat: no business scope, and nothing to capture — a casual chat must
+    # never turn into a "lead" on the owner's WhatsApp (lead_delivery falls back
+    # to the global WHATSAPP_TO / GOOGLE_SHEET_ID when the tenant sets none).
+    chat_mode = getattr(tenant, "mode", "business") == "chat"
+
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
-        stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name, tenant.language)),
-        tts=StreamAdapter(
-            tts=VoiceTTS(language=tenant.language, recorder=recorder), text_pacing=True
-        ),
+        stt=build_stt(tenant, ctx.proc.userdata["vad"]),
+        tts=build_tts(tenant.language),
         turn_handling=turn_handling,
     )
     logger.info(
@@ -1068,9 +1217,10 @@ async def entrypoint(ctx: JobContext):
         tenant
     )
 
-    agent = Agent(
+    agent = VoiceAgent(
         instructions=instructions,
-        llm=openai.LLM(model=CHAT_MODEL, base_url=GROQ_BASE, api_key=GROQ_API_KEY),
+        llm=build_llm(tenant.language),
+        recorder=recorder,
     )
 
     transcript: list[dict] = []
@@ -1094,7 +1244,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("conversation_item_added")
     def on_conversation_item(ev):
-        nonlocal lead_submitted
+        nonlocal lead_submitted, lead_extracting
         msg = getattr(ev, "item", ev)
         if not hasattr(msg, "role"):
             return
@@ -1129,8 +1279,8 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.warning(f"publish transcript failed: {e}")
 
-        if (role == "assistant" and not lead_submitted and not lead_extracting
-                and len(transcript) >= 4):
+        if (role == "assistant" and not chat_mode and not lead_submitted
+                and not lead_extracting and len(transcript) >= 4):
             lead_extracting = True
             # Snapshot the transcript: it keeps growing while the extraction runs.
             asyncio.create_task(_auto_extract_and_submit(list(transcript)))
@@ -1178,7 +1328,7 @@ async def entrypoint(ctx: JobContext):
         # Take the same lock: an auto-extraction may still be in flight from the
         # last assistant turn, and both paths end in submit_lead().
         async with lead_lock:
-            if not lead_submitted:
+            if not lead_submitted and not chat_mode:
                 lead_data = await extract_lead(transcript, tenant)
                 if lead_data:
                     call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
@@ -1186,8 +1336,13 @@ async def entrypoint(ctx: JobContext):
                     lead_submitted = True
                     call_store.upsert_call(session_id, lead_submitted=True)
 
-        # AI summary for the CRM (best-effort).
-        summary = await generate_summary(transcript, getattr(tenant, "business_type", ""))
+        # AI summary for the CRM (best-effort). A chat call is summarised as a
+        # conversation, not as an enquiry to "the business".
+        summary = await generate_summary(
+            transcript,
+            "an open, casual conversation (no business enquiry)" if chat_mode
+            else getattr(tenant, "business_type", ""),
+        )
 
         # Mix and persist the recording (best-effort).
         recording_path = recorder.finalize()
@@ -1208,12 +1363,10 @@ async def entrypoint(ctx: JobContext):
 async def session_decline(ctx: JobContext, tenant) -> None:
     """Politely decline a call that is over the client's monthly quota, then leave."""
     try:
-        from livekit.agents.tts import StreamAdapter
-
         session = AgentSession(
             vad=ctx.proc.userdata["vad"],
-            stt=GroqSTT(default_language=tenant.language, bias_prompt=_build_stt_prompt(tenant.agent_name, getattr(tenant, "business_info", ""), tenant.name, tenant.language)),
-            tts=StreamAdapter(tts=VoiceTTS(language=tenant.language), text_pacing=True),
+            stt=build_stt(tenant, ctx.proc.userdata["vad"]),
+            tts=build_tts(tenant.language),
         )
         await session.start(agent=Agent(instructions="Say only the given line."), room=ctx.room)
         msgs = {

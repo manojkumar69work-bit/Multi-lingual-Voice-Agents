@@ -20,7 +20,7 @@ _tree = ast.parse(_src)
 # the Indic-run pattern). All are plain literals / re.compile calls.
 _CONSTS = {
     "_INDIC_RUN", "_LEAD_FIELDS_HINT_TEMPLATE", "_CLOSING_HINT_TEMPLATE",
-    "_STYLE_HINT", "_SCOPE_GUARD",
+    "_STYLE_HINT", "_SCOPE_GUARD", "_CHAT_VOICE_RULES", "_CHAT_STT_BIAS",
 }
 for _n in _tree.body:
     if isinstance(_n, ast.Assign) and any(
@@ -31,6 +31,7 @@ for _n in _tree.body:
 for _n in _tree.body:
     if isinstance(_n, ast.FunctionDef) and _n.name in (
         "_tidy_itrans", "romanize", "build_greeting", "build_system_prompt",
+        "build_chat_system_prompt", "build_chat_greeting", "_build_stt_prompt",
     ):
         exec(compile(ast.Module([_n], []), "agent.py", "exec"), _ns)
 
@@ -47,6 +48,7 @@ except ImportError:  # pragma: no cover
 romanize = _ns["romanize"]
 build_greeting = _ns["build_greeting"]
 build_system_prompt = _ns["build_system_prompt"]
+build_stt_prompt = _ns["_build_stt_prompt"]
 
 is_dev = lambda s: any("ऀ" <= c <= "ॿ" for c in s)
 is_te = lambda s: any("ఀ" <= c <= "౿" for c in s)
@@ -54,8 +56,9 @@ is_te = lambda s: any("ఀ" <= c <= "౿" for c in s)
 
 class Tenant:
     """Minimal stand-in for tenants.TenantConfig."""
-    def __init__(self, language="hi"):
+    def __init__(self, language="hi", mode="business"):
         self.language = language
+        self.mode = mode
         self.agent_name = "Riya"
         self.name = "Acme Realty"
         self.role_description = "a real estate consultant"
@@ -91,7 +94,7 @@ assert is_te(te_prompt)
 # Loanwords in English letters, matching the Hindi convention. The Telugu-script
 # transliterations are what this replaced, so their presence is the regression.
 assert "మీ budget ఎంత అండి?" in te_prompt
-assert "appointment, time, free" in te_prompt
+assert "appointment, time, budget" in te_prompt
 # The old rule glossed every loanword into Telugu script — "appointment
 # (అపాయింట్‌మెంట్)", "budget (బడ్జెట్)". Those glosses are what got removed; the one
 # surviving Telugu-script "బడ్జెట్" is the counter-example showing what NOT to write.
@@ -101,8 +104,83 @@ assert te_prompt.count("బడ్జెట్") == 1, "only the counter-example 
 assert "Grandhikam" in te_prompt, "the anti-bookish rule must survive"
 assert "3 BHK కి మీ budget ఎంత అనుకుంటున్నారు?" in te_prompt
 
+# English is for single nouns only; Telugu grammar stays Telugu. The wrong/right
+# pairs are what fixed broken mixes like "నాకు చాలా love" in practice.
+assert "Never put a bare English verb, adjective or phrase" in te_prompt
+assert "Wrong:" in te_prompt and "Right:" in te_prompt
+# Example lines the LLM copies: no romanized Telugu verbs.
+assert "cheppagalara" not in te_prompt and "chusthunna" not in te_prompt
+
+# Every voice is female, and Hindi/Telugu verbs carry gender. A literal "~ji"
+# in a rule got copied into replies, so markers are written plainly.
+for _lang in ("hi", "te", "en"):
+    _p = build_system_prompt(Tenant(_lang))
+    assert "You are a woman" in _p and "main karti hoon" in _p, _lang
+    assert "Never correct their spelling" in _p, _lang
+    assert "'~" not in _p, _lang
+
 assert is_te(build_greeting(Tenant("te")))
 assert build_greeting(Tenant("en")).startswith("Hi!")
+
+
+# ── Open chat is a different person in the same three languages ─────────────
+# mode="chat" swaps the lead-capturing business assistant for a friend who can
+# talk about anything. The built-in script must exist for every language, carry
+# the voice rules (the text is read aloud), drop every business-only block, and
+# keep each language's script conventions — otherwise a Telugu chat tenant
+# would get an English friend, and a Hinglish one a newsreader.
+_VOICE_SAFE_PUNCT = re.compile(r"[—–;:()\[\]*#]")
+for _lang in ("hi", "te", "en"):
+    _t = Tenant(_lang, mode="chat")
+    _chat = build_system_prompt(_t)
+    _biz = build_system_prompt(Tenant(_lang))
+    assert _chat != _biz, _lang
+    assert "Riya" in _chat, _lang
+    # The shared voice rules are the whole point of the chat prompt.
+    assert "spoken aloud" in _chat, _lang
+    # Business-only blocks are gone: no role lock, no lead fields, no closing script.
+    assert "STRICT ROLE LOCK" not in _chat, _lang
+    assert "Details to collect" not in _chat, _lang
+    assert "our team will call you back" not in _chat, _lang
+    # Worked examples anchor register better than rules; every language has them.
+    assert "Caller:" in _chat and "You:" in _chat, _lang
+    _g = build_greeting(_t)
+    assert _g and _g != build_greeting(Tenant(_lang)), _lang
+    assert len(_g) < 160, f"a greeting is one breath, not a paragraph: {_g}"
+    assert not _VOICE_SAFE_PUNCT.search(_g), f"voice-unsafe punctuation in greeting: {_g}"
+    # A chat tenant with its own script still goes through the normal path; the
+    # built-in is only the blank-prompt fallback, same as business mode.
+    _bias = build_stt_prompt("Riya", "", "Open Chat", _lang, mode="chat")
+    assert "Riya" in _bias, _bias
+    assert "automation" not in _bias and "pricing" not in _bias, \
+        f"chat STT bias must not carry business vocabulary: {_bias}"
+    assert len(_bias) < 300, f"Whisper reads ~224 tokens of prompt: {_bias}"
+
+# Hinglish chat stays Roman: the greeting and the example lines the LLM copies.
+chat_hi = build_system_prompt(Tenant("hi", mode="chat"))
+chat_hi_g = build_greeting(Tenant("hi", mode="chat"))
+assert not is_dev(chat_hi_g), chat_hi_g
+assert not is_te(chat_hi), "no Telugu in the Hinglish chat prompt"
+assert not is_dev(build_stt_prompt("Riya", "", "Open Chat", "hi", mode="chat"))
+
+# Telugu chat is Telugu script, with English loanwords left in Latin, and no
+# Hindi forms (నమస్తే is what a Hindi speaker says; a Telugu one says నమస్కారం
+# or just హాయ్).
+chat_te = build_system_prompt(Tenant("te", mode="chat"))
+chat_te_g = build_greeting(Tenant("te", mode="chat"))
+assert is_te(chat_te) and is_te(chat_te_g), chat_te_g
+assert "నమస్తే" not in chat_te_g, chat_te_g
+assert not is_dev(chat_te), "no Devanagari in the Telugu chat prompt"
+assert is_te(build_stt_prompt("Riya", "", "Open Chat", "te", mode="chat"))
+
+# English chat has no Indic script anywhere the voice will read.
+chat_en = build_system_prompt(Tenant("en", mode="chat"))
+chat_en_g = build_greeting(Tenant("en", mode="chat"))
+assert not is_dev(chat_en) and not is_te(chat_en), "English chat prompt must be Latin only"
+assert not is_dev(chat_en_g) and not is_te(chat_en_g), chat_en_g
+
+# Business mode is untouched by the new field.
+assert build_system_prompt(Tenant("hi", mode="business")) == build_system_prompt(Tenant("hi"))
 
 
 # ── The transcript gets readable Latin back ──────────────────────────────────

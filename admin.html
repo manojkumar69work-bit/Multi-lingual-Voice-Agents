@@ -184,6 +184,9 @@
         <div><label for="f_language">Language</label>
           <select id="f_language"><option value="hi">Hinglish — Hindi in Roman letters</option><option value="te">Telugu</option><option value="en">English</option></select></div>
       </div>
+      <label for="f_mode">What the agent is for</label>
+      <select id="f_mode"><option value="business">Business assistant — answers enquiries and captures a lead</option><option value="chat">Open chat — a friend who talks about anything, no lead capture</option></select>
+      <div class="hint">Open chat ignores business type, details to collect and the closing. The built-in script and greeting exist in all three languages.</div>
       <label for="f_role_description">How the agent should come across</label>
       <input id="f_role_description" placeholder="a warm, professional real estate consultant" />
       <label for="f_greeting">First line on every call <span class="opt">(blank uses the built-in greeting)</span></label>
@@ -253,6 +256,7 @@ const PRESETS = {
     closing_instructions: 'Offer a test drive and say the showroom will call to confirm the slot.' },
   'Coaching institute': { business_type: 'coaching institute', role_description: 'a helpful admissions counsellor', lead_fields: 'name,phone,student_class,course_interest,preferred_batch,notes',
     closing_instructions: 'Offer a free demo class and say a counsellor will call back with batch timings.' },
+  'Open chat': { mode: 'chat', business_type: 'open conversation', role_description: 'a warm, curious, funny friend', lead_fields: '', closing_instructions: '' },
 };
 
 async function load() {
@@ -401,7 +405,7 @@ function renderDelivery() {
 }
 
 // ── Client drawer ──
-const FIELDS = { f_name: 'name', f_business_type: 'business_type', f_agent: 'agent_name', f_language: 'language', f_role_description: 'role_description',
+const FIELDS = { f_name: 'name', f_business_type: 'business_type', f_agent: 'agent_name', f_language: 'language', f_mode: 'mode', f_role_description: 'role_description',
   f_greeting: 'greeting', f_lead_fields: 'lead_fields', f_business: 'business_info', f_closing_instructions: 'closing_instructions', f_prompt: 'system_prompt',
   f_whatsapp: 'whatsapp_to', f_sheet: 'sheet_id', f_webhook: 'webhook_url', f_phone: 'phone_number' };
 
@@ -416,6 +420,7 @@ $('presets').addEventListener('click', (e) => {
   const p = PRESETS[b.dataset.p];
   $('f_business_type').value = p.business_type; $('f_role_description').value = p.role_description;
   $('f_lead_fields').value = p.lead_fields; $('f_closing_instructions').value = p.closing_instructions;
+  $('f_mode').value = p.mode || 'business';
   P.toast(`${b.dataset.p} preset applied — check Script & knowledge too`);
 });
 function greetPreview() {
@@ -432,6 +437,7 @@ function openClient(id = null, startTab = 'agent') {
   $('dSub').textContent = editing ? `${c.id} · ${P.num(c.calls)} calls · ${P.num(c.lead_count)} leads` : 'Set up the agent, then give the client a login.';
   for (const [el, key] of Object.entries(FIELDS)) $(el).value = c[key] ?? '';
   if (!editing) $('f_language').value = 'hi';
+  if (!$('f_mode').value) $('f_mode').value = 'business';
   $('f_slug').value = c.id || ''; $('f_slug').disabled = !!editing;
   $('f_password').value = ''; $('f_webhook_secret').value = '';
   $('f_password').placeholder = c.password_set ? 'Leave blank to keep the current password' : 'Set a password';

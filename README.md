@@ -4,7 +4,7 @@
 
 Multi-tenant from the ground up: each client organisation gets its own prompt, language, agent persona, minute quota, and login, and can never see another's calls or recordings. Retargeting it to a new domain — support, surveys, sales, lead capture — means swapping the prompt and the extraction schema, not writing code.
 
-The shipped configuration is **real-estate lead capture in Hinglish**, which is what the seed tenants and default prompts implement.
+The shipped configuration is **real-estate lead capture in Hinglish**, which is what the seed tenants and default prompts implement. A tenant can instead run in **open-chat mode** (`"mode": "chat"`): the agent becomes a friend who talks about anything, the business scope and lead capture are switched off, and the built-in script and greeting exist in Hinglish, Telugu and English. The seed `chat-hi`, `chat-te` and `chat-en` tenants show it.
 
 `Python` · `LiveKit / WebRTC` · `Groq Whisper + Llama 3.3` · `Sarvam Bulbul v3` · `Docker`
 
@@ -52,7 +52,7 @@ pace, speaker and temperature.
 | Portal | URL | Who | What |
 |--------|-----|-----|------|
 | **Login** | `/login` | everyone | Single sign-in; routes by role |
-| **Admin** | `/admin` | operator | Create/configure clients (prompt, greeting, language, agent name, password, minute quota, WhatsApp); see per-client calls / active / minutes / leads; drill into any client's calls |
+| **Admin** | `/admin` | operator | Create/configure clients (prompt, greeting, language, mode, agent name, password, minute quota, WhatsApp); see per-client calls / active / minutes / leads; drill into any client's calls |
 | **Client** | `/client` | each org | Their calls + active calls + minutes; per-call **summary, lead, transcript, and audio playback**; CSV lead export |
 | **Test caller** | `/` | operator | Browser WebRTC call UI to test the agent |
 | **Global dashboard** | `/dashboard` | internal | All calls across clients (legacy view) |
@@ -111,9 +111,9 @@ Caller (Browser or Phone)
 
 | Component | Primary | Fallback | Cost |
 |-----------|---------|----------|------|
-| ASR (STT) | Groq Whisper-large-v3-turbo | — | Free tier |
-| LLM | Groq Llama-3.3-70b-versatile | — | Free tier |
-| TTS | Sarvam Bulbul v3 | Edge TTS (neural) | Sarvam free tier |
+| ASR (STT) | Sarvam `saaras:v3` codemix, streaming (hi/te); Groq Whisper-large-v3 (en) | Groq Whisper (hi/te) | Sarvam credits / Groq free tier |
+| LLM | Sarvam `sarvam-105b-conversations` (hi/te); Groq `openai/gpt-oss-120b` (en) | Groq gpt-oss (hi/te) | Sarvam credits / Groq free tier |
+| TTS | Sarvam Bulbul v3 | Smallest.ai Lightning `aashi` → Edge TTS | Sarvam free tier |
 | VAD | Silero (bundled in AgentSession) | — | Free (local) |
 | Turn detection | LiveKit turn-detector `v1-mini` (hi/en) | Silero VAD alone (te) | Free (local CPU) |
 | SIP Trunk | Edesy India DID (Mumbai) | — | Paid (~₹500/mo) |
@@ -133,7 +133,7 @@ Caller (Browser or Phone)
 - **Google Sheets delivery** — New leads appended automatically (optional)
 - **WhatsApp alerts** — Lead details sent to owner via Twilio WhatsApp (optional)
 - **Live dashboard** — View call history, transcripts, leads at `/dashboard`
-- **Multi-tenant admin panel** — Per-client prompts, language, persona, quota, WhatsApp config (`admin.html`, `tenants.py`)
+- **Multi-tenant admin panel** — Per-client prompts, language, mode (business assistant or open chat), persona, quota, WhatsApp config (`admin.html`, `tenants.py`)
 - **Call recording** — Caller + agent mixed to one WAV per call, access-checked per tenant (`recorder.py`)
 - **AI call summaries** — Groq-generated summary attached to every completed call
 
@@ -204,7 +204,11 @@ Open **http://localhost:8000** in a browser → click the green call button.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GROQ_API_KEY` | Yes | — | Groq API key (STT + LLM) |
-| `SARVAM_API_KEY` | Yes | — | Sarvam API key (TTS) |
+| `SARVAM_API_KEY` | Yes | — | Sarvam API key (TTS; STT and LLM for hi/te) |
+| `SARVAM_STT_MODEL` | No | `saaras:v3` | Codemix STT for hi/te; empty = Groq Whisper only. v3 keeps English words in Latin, v4 writes them in native script |
+| `SARVAM_LLM_MODEL` | No | `sarvam-105b-conversations` | LLM for hi/te replies; empty = Groq only |
+| `SMALLEST_API_KEY` | No | — | Smallest.ai key; adds Lightning as the TTS fallback before Edge |
+| `SMALLEST_VOICE` / `SMALLEST_MODEL` | No | `aashi` / `lightning_v3.1_pro` | Smallest.ai fallback voice |
 | `ADMIN_USER` | No | `admin` | Admin portal username |
 | `ADMIN_PASSWORD` | No | `admin123` | Admin portal password — **change in prod** |
 | `SESSION_SECRET` | No | dev default | Secret for signing session cookies — **change in prod** |
@@ -214,7 +218,7 @@ Open **http://localhost:8000** in a browser → click the green call button.
 | `LIVEKIT_URL` | No | `ws://localhost:7880` | LiveKit server URL |
 | `LIVEKIT_API_KEY` | No | `devkey` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | No | `secret` | LiveKit API secret |
-| `LLM_MODEL` | No | `llama-3.3-70b-versatile` | Groq model override |
+| `LLM_MODEL` | No | `openai/gpt-oss-120b` | Groq model override |
 | `TTS_PACE` / `TTS_PACE_TE` | No | `1.0` / `0.95` | Speech rate (0.5–2.0). Bulbul v3 is trained at 1.0 |
 | `TTS_TEMPERATURE` | No | `0.6` | Prosody variation (v3 only, 0.01–2.0) |
 | `TTS_VOICE_HI` / `_TE` / `_EN` | No | `priya` / `neha` / `ishita` | Sarvam speaker per language |

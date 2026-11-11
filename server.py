@@ -16,16 +16,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import csv
 import hmac
+import io
 import json
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -147,6 +150,11 @@ class ContactRequest(BaseModel):
     company: str = ""
     service: str = ""
     message: str = ""
+
+
+class LeadUpdate(BaseModel):
+    lead_status: str | None = None
+    lead_notes: str | None = None
 
 
 class ClientUpsert(BaseModel):
@@ -518,9 +526,97 @@ def client_stats(client_id: str = Depends(auth.require_client)):
     return stats
 
 
+def _parse_when(value: str | None, *, end: bool = False) -> float | None:
+    """Accept a date (YYYY-MM-DD, taken as the whole day in UTC) or an ISO
+    datetime. Returns an epoch, or None when blank."""
+    if not value:
+        return None
+    v = value.strip()
+    try:
+        if len(v) == 10:
+            d = datetime.fromisoformat(v).replace(tzinfo=timezone.utc)
+            if end:
+                d = d + timedelta(days=1) - timedelta(microseconds=1)
+            return d.timestamp()
+        d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.timestamp()
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Bad date: {value!r}")
+
+
 @app.get("/api/client/calls")
-def client_calls(client_id: str = Depends(auth.require_client)):
-    return _calls_payload(client_id)
+def client_calls(
+    client_id: str = Depends(auth.require_client),
+    q: str = "", from_: str | None = Query(default=None, alias="from"), to: str | None = None,
+    has_lead: str | None = None, status: str | None = None, lead_status: str | None = None,
+    page: int = 1, per_page: int = 50,
+):
+    """The client's calls: live ones in `active`, the rest filtered and paged in
+    `recent`. Query params: q, from, to, has_lead (1/0), status, lead_status,
+    page, per_page."""
+    hl = None if has_lead in (None, "") else has_lead.lower() in ("1", "true", "yes")
+    found = call_store.search_calls(
+        client_id, q=q, date_from=_parse_when(from_), date_to=_parse_when(to, end=True),
+        has_lead=hl, status=status, lead_status=lead_status, page=page, per_page=per_page,
+    )
+    active = call_store.get_active_calls(client_id=client_id)
+    return {
+        "active": active,
+        "recent": found["items"],
+        "total_active": len(active),
+        "total_completed": found["total"],
+        "total": found["total"],
+        "page": found["page"],
+        "per_page": found["per_page"],
+    }
+
+
+@app.get("/api/client/calls/daily")
+def client_calls_daily(days: int = 30, client_id: str = Depends(auth.require_client)):
+    return call_store.daily_stats(client_id, days)
+
+
+@app.patch("/api/client/calls/{session_id}")
+def client_update_lead(session_id: str, body: LeadUpdate, client_id: str = Depends(auth.require_client)):
+    try:
+        ok = call_store.update_lead_status(session_id, client_id, body.lead_status, body.lead_notes)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Call not found")
+    return call_store.get_call(session_id)
+
+
+@app.get("/api/client/export.csv")
+def client_export_csv(client_id: str = Depends(auth.require_client)):
+    """Every call with its lead fields, as CSV. Cells that would start a
+    spreadsheet formula are prefixed with an apostrophe."""
+    t = tenants.get_tenant(client_id)
+    fields = [f.strip().replace(" ", "_").lower() for f in (t.lead_fields if t else "").split(",") if f.strip()] or ["name", "notes"]
+    esc = lead_delivery.escape_cell
+
+    def rows():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["session_id", "started_at", "duration_seconds", "caller_phone", "lead_status", *fields, "summary", "recording"])
+        yield buf.getvalue(); buf.seek(0); buf.truncate()
+        for c in call_store.iter_calls(client_id):
+            ld = c.get("lead_data") or {}
+            extra = [k for k in ld if k not in fields]
+            w.writerow([
+                c["session_id"], c.get("created_at", ""), int(c.get("duration_seconds") or 0),
+                esc(c.get("caller_phone", "")), c.get("lead_status") or "new",
+                *[esc(ld.get(k, "")) for k in fields],
+                esc(c.get("summary", "")) + ("" if not extra else " | " + "; ".join(f"{k}: {ld[k]}" for k in extra if ld.get(k))),
+                f"/api/recordings/{c['session_id']}" if c.get("recording_path") else "",
+            ])
+            yield buf.getvalue(); buf.seek(0); buf.truncate()
+
+    name = f"{client_id}-calls-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return StreamingResponse(rows(), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/client/calls/{session_id}")

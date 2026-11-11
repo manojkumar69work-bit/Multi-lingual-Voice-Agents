@@ -10,7 +10,8 @@ import os
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("call-store")
 
@@ -78,6 +79,8 @@ def init_db():
         ("summary", "ALTER TABLE calls ADD COLUMN summary TEXT DEFAULT ''"),
         ("recording_path", "ALTER TABLE calls ADD COLUMN recording_path TEXT DEFAULT ''"),
         ("client_id", "ALTER TABLE calls ADD COLUMN client_id TEXT DEFAULT ''"),
+        ("lead_status", "ALTER TABLE calls ADD COLUMN lead_status TEXT DEFAULT 'new'"),
+        ("lead_notes", "ALTER TABLE calls ADD COLUMN lead_notes TEXT DEFAULT ''"),
     ):
         if col not in existing:
             conn.execute(ddl)
@@ -91,15 +94,30 @@ _UPSERT_COLUMNS = {
     "caller_phone": lambda v: v,
     "status": lambda v: v,
     "duration_seconds": lambda v: v,
-    "transcript": lambda v: json.dumps(v),
+    # ensure_ascii=False keeps Indic text as written, so a LIKE search for a
+    # Telugu word matches; rows written before this stay \u-escaped and are
+    # matched through the escaped form of the query in search_calls.
+    "transcript": lambda v: json.dumps(v, ensure_ascii=False),
     "lead_extracted": lambda v: 1 if v else 0,
     "lead_submitted": lambda v: 1 if v else 0,
-    "lead_data": lambda v: json.dumps(v),
+    "lead_data": lambda v: json.dumps(v, ensure_ascii=False),
     "client_id": lambda v: v,
     "summary": lambda v: v,
     "recording_path": lambda v: v,
     "error": lambda v: v,
+    "lead_status": lambda v: v,
+    "lead_notes": lambda v: v,
 }
+
+# Lead workflow states a client can set from their portal.
+LEAD_STATUSES = ("new", "contacted", "visit", "won", "lost")
+
+# SQL fragment: the lead has at least one non-empty field other than notes.
+# Shared by the stats, the has_lead filter and the daily aggregates so "a lead"
+# means one thing everywhere.
+_HAS_LEAD_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(lead_data) WHERE key != 'notes' AND TRIM(value) != '')"
+)
 
 
 def upsert_call(session_id: str, **kwargs):
@@ -164,6 +182,124 @@ def list_calls(
 
 def get_active_calls(client_id: str | None = None) -> list[dict]:
     return list_calls(status="active", client_id=client_id)
+
+
+def search_calls(
+    client_id: str,
+    *,
+    q: str = "",
+    date_from: float | None = None,
+    date_to: float | None = None,
+    has_lead: bool | None = None,
+    status: str | None = None,
+    lead_status: str | None = None,
+    page: int = 1,
+    per_page: int = 50,
+) -> dict:
+    """Filtered, paged calls for one client, newest first.
+
+    `q` is matched case-insensitively against the transcript, the lead fields,
+    the summary and the caller's number. Without `status`, live calls are left
+    out (the portal lists them separately)."""
+    conn = _get_conn()
+    where = ["client_id = ?"]
+    params: list = [client_id]
+    if status:
+        where.append("status = ?"); params.append(status)
+    else:
+        where.append("status != 'active'")
+    if date_from is not None:
+        where.append("created_at >= ?"); params.append(float(date_from))
+    if date_to is not None:
+        where.append("created_at <= ?"); params.append(float(date_to))
+    if has_lead is True:
+        where.append(_HAS_LEAD_SQL)
+    elif has_lead is False:
+        where.append(f"NOT {_HAS_LEAD_SQL}")
+    if lead_status:
+        where.append("lead_status = ?"); params.append(lead_status)
+    if q:
+        like = f"%{q.strip()}%"
+        # Older rows hold JSON with non-ASCII escaped (\u0c28...), so try that
+        # spelling of the query too.
+        escaped = "%" + json.dumps(q.strip(), ensure_ascii=True)[1:-1] + "%"
+        where.append(
+            "(transcript LIKE ? OR transcript LIKE ? OR lead_data LIKE ? OR lead_data LIKE ? "
+            "OR summary LIKE ? OR caller_phone LIKE ?)"
+        )
+        params.extend([like, escaped, like, escaped, like, like])
+    sql_where = " WHERE " + " AND ".join(where)
+    total = conn.execute(f"SELECT COUNT(*) FROM calls{sql_where}", params).fetchone()[0]
+    page = max(1, int(page)); per_page = max(1, min(500, int(per_page)))
+    rows = conn.execute(
+        f"SELECT * FROM calls{sql_where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        [*params, per_page, (page - 1) * per_page],
+    ).fetchall()
+    return {"items": [_row_to_dict(r) for r in rows], "total": total, "page": page, "per_page": per_page}
+
+
+def update_lead_status(session_id: str, client_id: str, status: str | None, notes: str | None) -> bool:
+    """Set the lead workflow state and/or notes on one of the client's calls.
+    Returns False when the call is not theirs. Raises ValueError on a bad status."""
+    if status is not None and status not in LEAD_STATUSES:
+        raise ValueError(f"lead_status must be one of {', '.join(LEAD_STATUSES)}")
+    sets, params = ["updated_at = ?"], [time.time()]
+    if status is not None:
+        sets.append("lead_status = ?"); params.append(status)
+    if notes is not None:
+        sets.append("lead_notes = ?"); params.append(notes)
+    params.extend([session_id, client_id])
+    conn = _get_conn()
+    cur = conn.execute(f"UPDATE calls SET {', '.join(sets)} WHERE session_id = ? AND client_id = ?", params)
+    conn.commit()
+    return cur.rowcount > 0
+
+
+_IST = ZoneInfo("Asia/Kolkata")
+OFFICE_HOURS = (9, 20)   # calls created outside 09:00–20:00 IST count as after-hours
+
+
+def daily_stats(client_id: str, days: int = 30) -> list[dict]:
+    """One row per calendar day (IST), oldest first, zero-filled:
+    {date, calls, leads, minutes, after_hours}."""
+    days = max(1, min(366, int(days)))
+    today = datetime.now(_IST).date()
+    start_day = today - timedelta(days=days - 1)
+    start_epoch = datetime.combine(start_day, datetime.min.time(), tzinfo=_IST).timestamp()
+    conn = _get_conn()
+    rows = conn.execute(
+        f"SELECT created_at, duration_seconds, {_HAS_LEAD_SQL} AS has_lead "
+        "FROM calls WHERE client_id = ? AND created_at >= ? AND status != 'active'",
+        (client_id, start_epoch),
+    ).fetchall()
+    buckets: dict[str, dict] = {}
+    for i in range(days):
+        d = (start_day + timedelta(days=i)).isoformat()
+        buckets[d] = {"date": d, "calls": 0, "leads": 0, "minutes": 0.0, "after_hours": 0}
+    for r in rows:
+        when = datetime.fromtimestamp(r["created_at"], tz=_IST)
+        b = buckets.get(when.date().isoformat())
+        if b is None:
+            continue
+        b["calls"] += 1
+        b["leads"] += 1 if r["has_lead"] else 0
+        b["minutes"] += (r["duration_seconds"] or 0) / 60.0
+        if not (OFFICE_HOURS[0] <= when.hour < OFFICE_HOURS[1]):
+            b["after_hours"] += 1
+    out = list(buckets.values())
+    for b in out:
+        b["minutes"] = round(b["minutes"], 1)
+    return out
+
+
+def iter_calls(client_id: str):
+    """Every non-live call of a client, oldest first, for exports."""
+    conn = _get_conn()
+    for r in conn.execute(
+        "SELECT * FROM calls WHERE client_id = ? AND status != 'active' ORDER BY created_at ASC",
+        (client_id,),
+    ):
+        yield _row_to_dict(r)
 
 
 def mark_stalled(older_than_seconds: float) -> int:

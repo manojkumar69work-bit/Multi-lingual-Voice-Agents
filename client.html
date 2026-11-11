@@ -80,9 +80,16 @@
           <button aria-pressed="false" data-f="lead">With a lead</button>
           <button aria-pressed="false" data-f="nolead">No lead</button>
         </div>
+        <select id="fStatus" aria-label="Lead status"><option value="">Any status</option><option value="new">New</option><option value="contacted">Contacted</option><option value="visit">Visit booked</option><option value="won">Won</option><option value="lost">Lost</option></select>
+        <input id="fFrom" type="date" aria-label="From date" /><input id="fTo" type="date" aria-label="To date" />
       </div>
       <div class="split">
-        <div class="panel call-list" id="callList" role="listbox" aria-label="Calls"></div>
+        <div>
+          <div class="panel call-list" id="callList" role="listbox" aria-label="Calls"></div>
+          <div class="toolbar" id="pager" style="margin-top:10px;justify-content:space-between" hidden>
+            <button class="btn ghost sm" id="pgPrev">Previous</button><span class="muted" id="pgInfo" style="font-size:13px"></span><button class="btn ghost sm" id="pgNext">Next</button>
+          </div>
+        </div>
         <div class="panel detail" id="detail"><div class="empty"><b>No call selected</b>Choose one from the list.</div></div>
       </div>
     </section>
@@ -91,7 +98,7 @@
     <section class="view" id="v-leads">
       <div class="page-head">
         <div><h1>Leads</h1><p>Callers who left enough detail to follow up. Newest first.</p></div>
-        <div class="actions"><button class="btn" data-icon="down" onclick="P.leadsCSV(CALLS, 'leads.csv')">Export CSV</button></div>
+        <div class="actions"><a class="btn" data-icon="down" href="/api/client/export.csv" download>Export all calls (CSV)</a></div>
       </div>
       <div class="panel table-wrap"><table class="t" id="leadTable"></table></div>
     </section>
@@ -113,20 +120,40 @@
 </div>
 
 <script>
-let CALLS = [], ACTIVE = [], DELIV = [], ME = null;
-let selected = null, filter = 'all', query = '';
+let CALLS = [], ACTIVE = [], LEADS = [], DELIV = [], DAILY = [], ME = null;
+let selected = null, filter = 'all', query = '', leadStatus = '', dateFrom = '', dateTo = '';
+let page = 1, total = 0;
+const PER_PAGE = 50;
 
 const $ = (id) => document.getElementById(id);
 
+// The calls list is filtered and paged on the server: the browser never holds
+// more than one page, however long the client's history gets.
+function callsQuery() {
+  const p = new URLSearchParams({ page, per_page: PER_PAGE });
+  if (query) p.set('q', query);
+  if (filter === 'lead') p.set('has_lead', '1');
+  if (filter === 'nolead') p.set('has_lead', '0');
+  if (leadStatus) p.set('lead_status', leadStatus);
+  if (dateFrom) p.set('from', dateFrom);
+  if (dateTo) p.set('to', dateTo);
+  return '/api/client/calls?' + p.toString();
+}
+
 async function load() {
-  const [stats, calls, deliv] = await Promise.all([
+  const [stats, calls, leads, deliv, daily] = await Promise.all([
     P.api('/api/client/stats'),
-    P.api('/api/client/calls'),
+    P.api(callsQuery()),
+    P.api('/api/client/calls?has_lead=1&per_page=200'),
     P.api('/api/client/deliveries').catch(() => ({ deliveries: [], stats: {} })),
+    P.api('/api/client/calls/daily?days=14').catch(() => []),
   ]);
   ACTIVE = calls.active || [];
   CALLS = [...ACTIVE, ...(calls.recent || [])];
+  total = calls.total || 0;
+  LEADS = leads.recent || [];
   DELIV = deliv.deliveries || [];
+  DAILY = daily;
   renderOverview(stats);
   renderCalls();
   renderLeads();
@@ -134,12 +161,18 @@ async function load() {
   $('stamp').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 
+let reloadTimer = null;
+function reloadCalls() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => load().catch(e => P.toast(e.message, true)), 300);
+}
+
 function renderOverview(s) {
-  const leads = CALLS.filter(P.hasLead);
+  const leads = LEADS;
   $('hello').textContent = s.name || ME.name || 'Your calls';
   $('kLeads').textContent = P.num(s.lead_count);
   $('kCalls').textContent = P.num(s.calls);
-  $('kRate').innerHTML = CALLS.length ? Math.round(leads.length / CALLS.length * 100) + '<small>%</small>' : '–';
+  $('kRate').innerHTML = s.calls ? Math.round((s.lead_count || 0) / s.calls * 100) + '<small>%</small>' : '–';
   $('kLive').textContent = s.active || 0;
   $('kLive').classList.toggle('live-v', !!s.active);
   $('kMin').innerHTML = P.mins(s.month_minutes) + (s.minute_quota ? `<small>/ ${P.num(s.minute_quota)}</small>` : '');
@@ -150,7 +183,7 @@ function renderOverview(s) {
     $('quota').firstElementChild.style.width = pct + '%';
     $('kMinLabel').textContent = pct >= 100 ? 'Monthly minutes used up' : `Minutes this month · ${Math.round(pct)}% of plan`;
   }
-  $('nCalls').textContent = CALLS.length || '';
+  $('nCalls').textContent = total || '';
   $('nLeads').textContent = leads.length || '';
   $('nLeads').className = 'n';
   $('nCalls').className = 'n' + (ACTIVE.length ? ' live' : '');
@@ -160,7 +193,13 @@ function renderOverview(s) {
   $('liveList').innerHTML = ACTIVE.map(itemHTML).join('');
   bindItems($('liveList'));
 
-  P.barChart($('chart'), P.perDay(CALLS, 14));
+  // Per-day figures come from the server (IST days, after-hours counted), so
+  // they cover every call, not just the page in memory.
+  const series = (DAILY || []).map(d => ({ d: new Date(d.date + 'T00:00:00'), key: d.date, calls: d.calls, leads: d.leads, secs: d.minutes * 60, after_hours: d.after_hours }));
+  if (series.length) P.barChart($('chart'), series); else P.barChart($('chart'), P.perDay(CALLS, 14));
+  const ah = (DAILY || []).reduce((a, d) => a + (d.after_hours || 0), 0);
+  const titleEl = document.querySelector('#chart').previousElementSibling?.querySelector('span');
+  if (titleEl) titleEl.textContent = `Last 14 days · ${ah} answered outside 9am–8pm`;
 
   const fresh = leads.slice(0, 5);
   $('freshLeads').innerHTML = fresh.length ? `<div class="call-list" style="max-height:none;margin:0 -20px -18px">${fresh.map(itemHTML).join('')}</div>`
@@ -168,13 +207,8 @@ function renderOverview(s) {
   bindItems($('freshLeads'));
 }
 
-function matches(c) {
-  if (filter === 'lead' && !P.hasLead(c)) return false;
-  if (filter === 'nolead' && P.hasLead(c)) return false;
-  if (!query) return true;
-  const hay = [JSON.stringify(P.leadOf(c)), c.summary, c.caller_phone, ...(c.transcript || []).map(m => m.content)].join(' ').toLowerCase();
-  return hay.includes(query);
-}
+// Filtering happens on the server (see callsQuery); live calls are always shown.
+function matches() { return true; }
 
 const itemHTML = (c) => P.callItem(c, selected);
 function bindItems(root) {
@@ -183,23 +217,57 @@ function bindItems(root) {
 
 function renderCalls() {
   const list = CALLS.filter(matches);
+  const filtered = query || filter !== 'all' || leadStatus || dateFrom || dateTo;
   $('callList').innerHTML = list.length ? list.map(itemHTML).join('')
-    : CALLS.length ? '<div class="empty"><b>Nothing matches</b>Try a different search or filter.</div>'
+    : filtered ? '<div class="empty"><b>Nothing matches</b>Try a different search or filter.</div>'
     : '<div class="empty"><b>No calls yet</b>Calls appear here the moment your agent picks up.</div>';
   bindItems($('callList'));
+  const pages = Math.max(1, Math.ceil(total / PER_PAGE));
+  $('pager').hidden = pages <= 1;
+  $('pgInfo').textContent = `Page ${page} of ${pages} · ${total} calls`;
+  $('pgPrev').disabled = page <= 1; $('pgNext').disabled = page >= pages;
   if (selected) renderDetail(selected, true);
 }
 
 async function renderDetail(id, soft = false) {
   selected = id;
   document.querySelectorAll('.call-item').forEach(b => b.setAttribute('aria-selected', b.dataset.id === id));
-  let c = CALLS.find(x => x.session_id === id);
+  let c = CALLS.find(x => x.session_id === id) || LEADS.find(x => x.session_id === id);
   if (!c) { try { c = await P.api('/api/client/calls/' + encodeURIComponent(id)); } catch (_) {} }
-  P.renderDetail($('detail'), c, { deliveries: DELIV, soft });
+  const el = $('detail');
+  const before = el.dataset.v;
+  P.renderDetail(el, c, { deliveries: DELIV, soft });
+  if (c && (!soft || before !== el.dataset.v || !el.querySelector('#followup'))) renderFollowup(el, c);
+}
+
+// Lead workflow: status and notes the client keeps on each call.
+function renderFollowup(el, c) {
+  el.querySelector('#followup')?.remove();
+  const block = document.createElement('div');
+  block.id = 'followup';
+  block.innerHTML = `<div class="block-label"><span>Follow-up</span>${P.leadStatusHTML(c.lead_status)}</div>
+    <div class="grid2" style="align-items:end">
+      <div><label for="fuStatus">Status</label><select id="fuStatus">${Object.entries(P.LEAD_STATUS).map(([k, [l]]) => `<option value="${k}" ${k === (c.lead_status || 'new') ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="actions"><button class="btn sm" id="fuSave">Save</button></div>
+    </div>
+    <label for="fuNotes">Notes</label><textarea id="fuNotes" rows="3" placeholder="What happened when you called back?">${P.esc(c.lead_notes || '')}</textarea>`;
+  const anchor = el.querySelector('.summary') || el.querySelector('.detail-head');
+  anchor ? anchor.insertAdjacentElement('afterend', block) : el.appendChild(block);
+  block.querySelector('#fuSave').addEventListener('click', async () => {
+    const body = { lead_status: block.querySelector('#fuStatus').value, lead_notes: block.querySelector('#fuNotes').value };
+    try {
+      const updated = await P.api('/api/client/calls/' + encodeURIComponent(c.session_id), { method: 'PATCH', body });
+      Object.assign(c, updated);
+      P.toast('Follow-up saved');
+      el.dataset.v = '';           // force the pane to redraw with the new badge
+      renderDetail(c.session_id);
+      load().catch(() => {});
+    } catch (e) { P.toast(e.message, true); }
+  });
 }
 
 function renderLeads() {
-  const leads = CALLS.filter(P.hasLead);
+  const leads = LEADS;
   if (!leads.length) { $('leadTable').innerHTML = '<tbody><tr><td class="empty"><b>No leads yet</b>Leads appear once a caller shares a name and a way to reach them.</td></tr></tbody>'; return; }
   const cols = ['name', 'phone', 'property_type', 'budget', 'location', 'timeline'];
   const extra = [];
@@ -209,7 +277,7 @@ function renderLeads() {
     <tbody>${leads.map(c => {
       const ld = P.leadOf(c), cp = P.completeness(c, keys);
       return `<tr class="click" data-id="${P.esc(c.session_id)}">${keys.map(k => `<td class="wrap">${ld[k] ? P.esc(ld[k]) : '<span class="muted">—</span>'}</td>`).join('')}
-        <td class="mono">${cp.got}/${cp.of}</td><td class="mono">${P.ago(c.created_at)}</td><td>${P.deliveryBadge(c, DELIV)}</td></tr>`;
+        <td class="mono">${cp.got}/${cp.of}</td><td class="mono">${P.ago(c.created_at)}</td><td>${P.leadStatusHTML(c.lead_status)} ${P.deliveryBadge(c, DELIV)}</td></tr>`;
     }).join('')}</tbody>`;
   $('leadTable').querySelectorAll('tr.click').forEach(r => r.addEventListener('click', () => { location.hash = 'calls/' + r.dataset.id; }));
 }
@@ -231,13 +299,18 @@ function renderDelivery(s) {
     }).join('')}</tbody>`;
 }
 
-$('q').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); renderCalls(); });
+$('q').addEventListener('input', (e) => { query = e.target.value.trim(); page = 1; reloadCalls(); });
 $('filter').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  filter = b.dataset.f;
+  filter = b.dataset.f; page = 1;
   $('filter').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
-  renderCalls();
+  reloadCalls();
 });
+$('fStatus').addEventListener('change', (e) => { leadStatus = e.target.value; page = 1; reloadCalls(); });
+$('fFrom').addEventListener('change', (e) => { dateFrom = e.target.value; page = 1; reloadCalls(); });
+$('fTo').addEventListener('change', (e) => { dateTo = e.target.value; page = 1; reloadCalls(); });
+$('pgPrev').addEventListener('click', () => { if (page > 1) { page--; reloadCalls(); } });
+$('pgNext').addEventListener('click', () => { page++; reloadCalls(); });
 
 (async () => {
   P.mountChrome();

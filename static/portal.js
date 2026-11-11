@@ -207,6 +207,13 @@ const P = (() => {
     });
   }
 
+  // Lead workflow badge (new → contacted → visit → won/lost), set by the client.
+  const LEAD_STATUS = { new: ['New', ''], contacted: ['Contacted', 'warn'], visit: ['Visit booked', 'warn'], won: ['Won', 'ok'], lost: ['Lost', 'bad'] };
+  function leadStatusHTML(status) {
+    const [label, cls] = LEAD_STATUS[status] || LEAD_STATUS.new;
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
   function callItem(c, selectedId, extra = '') {
     const live = c.status === 'active';
     return `<button class="call-item" role="option" data-id="${esc(c.session_id)}" aria-selected="${selectedId === c.session_id}">
@@ -362,5 +369,5 @@ const P = (() => {
   return { GLYPH, icon, esc, api, guard, logout, dur, clock, mins, num, ago, when, title,
     leadOf, hasLead, stalled, leadName, callTitle, callLine, completeness, strip, talkShare,
     transcriptHTML, wireStrip, factsHTML, deliveryBadge, renderDetail, callItem, perDay, barChart,
-    router, toast, mountChrome, downloadCSV, leadsCSV, poll };
+    router, toast, mountChrome, downloadCSV, leadsCSV, poll, leadStatusHTML, LEAD_STATUS };
 })();

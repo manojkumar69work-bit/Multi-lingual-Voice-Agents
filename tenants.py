@@ -22,9 +22,12 @@ import logging
 import os
 import re
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
+import secrets
+import time
 from pathlib import Path
 
+import call_store
 import languages
 import passwords
 
@@ -70,6 +73,10 @@ class TenantConfig:
     role_description: str = ""          # e.g. "a professional real estate consultant", "a polite medical receptionist"
     lead_fields: str = ""               # comma-separated field list, e.g. "name,property_type,budget,location,timeline,notes"
     closing_instructions: str = ""      # optional custom closing behavior; blank uses generic fallback
+    call_key: str = ""                  # public key for the client's call page / widget (32 hex)
+    session_version: int = 1            # bumped on password change or pause; client JWTs carry it
+    created_at: float = 0.0
+    updated_at: float = 0.0
 
     # Fields never sent to a browser. `password` is a PBKDF2 hash and
     # `webhook_secret` signs outbound lead payloads — neither is re-displayable,
@@ -100,12 +107,25 @@ DEFAULT_TENANT = TenantConfig(
     closing_instructions="",
 )
 
-# ── Loader ─────────────────────────────────────────────────────────────────
+# ── Storage ────────────────────────────────────────────────────────────────
+# Tenants live in the `tenants` table of the shared SQLite file (call_store).
+# Every read goes to the table, so the server and the agent worker — separate
+# processes — always see the row the admin just saved; there is no cache to
+# invalidate and no restart to schedule. `tenants.json` is imported once if the
+# table is empty (then renamed *.imported), and `save_tenants()` now writes an
+# export copy rather than the source of truth.
 
 _TENANTS_PATH = os.environ.get(
     "TENANTS_CONFIG",
     os.path.join(os.path.dirname(__file__), "tenants.json"),
 )
+
+# Persisted fields, in column order. `id` is the primary key.
+TENANT_COLUMNS: tuple[str, ...] = tuple(f.name for f in fields(TenantConfig))
+
+
+class TenantExists(ValueError):
+    """Raised by upsert_tenant(create_only=True) when the id is taken."""
 
 
 def slugify(text: str) -> str:
@@ -118,7 +138,8 @@ def _normalize_number(num: str) -> str:
     """Normalize phone number for matching: keep digits and a leading +."""
     if not num:
         return ""
-    return str(num).strip().replace("tel:", "").replace("sip:", "")
+    num = num.strip().replace(" ", "").replace("-", "")
+    return num
 
 
 def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
@@ -148,167 +169,216 @@ def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
         role_description=d.get("role_description", ""),
         lead_fields=d.get("lead_fields", ""),
         closing_instructions=d.get("closing_instructions", ""),
+        call_key=d.get("call_key", "") or "",
+        session_version=int(d.get("session_version", 1) or 1),
+        created_at=float(d.get("created_at", 0) or 0),
+        updated_at=float(d.get("updated_at", 0) or 0),
     )
 
 
-def load_tenants(path: str | None = None) -> dict[str, TenantConfig]:
-    """Load tenant config from JSON. Returns {id: TenantConfig}.
+def _row_to_cfg(row) -> TenantConfig:
+    return _tenant_from_dict(dict(row))
 
-    File format:
-      {
-        "default": {"name": "Default", "language": "hi", "agent_name": "Riya"},
-        "tenants": [
-          {"id": "mumbai-realty", "name": "Mumbai Realty", "language": "hi",
-           "agent_name": "Riya", "system_prompt": "...", "password": "..."},
-          ...
-        ]
-      }
-    """
+
+def _default() -> TenantConfig:
+    return DEFAULT_TENANT
+
+
+def _conn():
+    return call_store.get_conn()
+
+
+def _read(tenant_id: str) -> TenantConfig | None:
+    row = _conn().execute("SELECT * FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
+    return _row_to_cfg(row) if row else None
+
+
+def _write(cfg: TenantConfig) -> None:
+    d = cfg.public_dict()
+    d["enforce_quota"] = 1 if d["enforce_quota"] else 0
+    d["active"] = 1 if d["active"] else 0
+    cols = ", ".join(TENANT_COLUMNS)
+    placeholders = ", ".join(f":{c}" for c in TENANT_COLUMNS)
+    updates = ", ".join(f"{c}=excluded.{c}" for c in TENANT_COLUMNS if c not in ("id", "created_at"))
+    with _WRITE_LOCK:
+        _conn().execute(
+            f"INSERT INTO tenants ({cols}) VALUES ({placeholders}) "
+            f"ON CONFLICT(id) DO UPDATE SET {updates}",
+            d,
+        )
+        _conn().commit()
+
+
+def import_json_if_empty(path: str | None = None) -> int:
+    """One-time import of the legacy tenants.json into the table.
+
+    Runs only when the table has no rows and the file exists. The file is
+    renamed to `<name>.imported` afterwards so it is never imported twice and
+    never mistaken for the live config."""
     p = Path(path or _TENANTS_PATH)
-    if not p.exists():
-        logger.warning("tenants.json not found at %s — using default only", p)
-        return {"default": DEFAULT_TENANT}
-
+    count = _conn().execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
+    if count or not p.exists():
+        return 0
     try:
         with open(p, "r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        logger.error("Failed to load tenants.json: %s — using default only", e)
-        return {"default": DEFAULT_TENANT}
-
-    out: dict[str, TenantConfig] = {}
-
-    default_cfg = data.get("default", {}) or {}
-    out["default"] = _tenant_from_dict(default_cfg, fallback_id="default")
-    out["default"].id = "default"
-
+        logger.error("Failed to read %s for import: %s", p, e)
+        return 0
+    now = time.time()
+    imported = 0
     for t in data.get("tenants", []) or []:
         cfg = _tenant_from_dict(t)
         if not cfg.id or cfg.id == "default":
             logger.warning("Skipping tenant with missing/invalid id: %s", t)
             continue
-        out[cfg.id] = cfg
+        cfg.password = passwords.ensure_hashed(cfg.password)
+        cfg.call_key = cfg.call_key or secrets.token_hex(16)
+        cfg.created_at = cfg.created_at or now
+        cfg.updated_at = now
+        _write(cfg)
+        imported += 1
+    p.replace(p.with_name(p.name + ".imported"))
+    logger.info("Imported %d tenants from %s into SQLite", imported, p)
+    return imported
 
-    logger.info(
-        "Loaded %d tenants from %s (default language=%s, agent=%s)",
-        len(out), p, out["default"].language, out["default"].agent_name,
-    )
+
+def load_tenants(path: str | None = None) -> dict[str, TenantConfig]:
+    """All tenants from the table as {id: TenantConfig}, plus the default."""
+    import_json_if_empty(path)
+    out: dict[str, TenantConfig] = {"default": _default()}
+    for row in _conn().execute("SELECT * FROM tenants ORDER BY created_at").fetchall():
+        cfg = _row_to_cfg(row)
+        out[cfg.id] = cfg
     return out
 
 
-# Module-level registry, loaded at import
-_TENANTS: dict[str, TenantConfig] = load_tenants()
-
-
 def reload_tenants() -> dict[str, TenantConfig]:
-    """Hot-reload tenant config (call after editing tenants.json)."""
-    global _TENANTS
-    _TENANTS = load_tenants()
-    return _TENANTS
+    """Kept for callers that used to refresh the JSON cache; reads are live now."""
+    return load_tenants()
 
-
-# ── Persistence (admin CRUD) ─────────────────────────────────────────────────
 
 def save_tenants(path: str | None = None) -> None:
-    """Write the current registry back to JSON (default + all real clients)."""
-    p = Path(path or _TENANTS_PATH)
-    default = _TENANTS.get("default", DEFAULT_TENANT)
+    """Write an export copy of every client to JSON (the table is the source)."""
+    p = Path(path or os.path.join(os.path.dirname(_TENANTS_PATH), "tenants.export.json"))
     payload = {
-        "_comment": (
-            "Multi-tenant config. Each tenant = one business client. "
-            "Edited via the admin portal (POST/PUT/DELETE /api/admin/clients) or by hand. "
-            "Restart agent.py to pick up changes for live calls; server hot-reloads."
-        ),
-        "default": {
-            "name": default.name,
-            "language": default.language,
-            "agent_name": default.agent_name,
-        },
-        "tenants": [
-            t.public_dict() for tid, t in _TENANTS.items() if tid != "default"
-        ],
+        "_comment": "Export of the tenants table. The live config is in calls.db; edit via the admin portal.",
+        "default": {"name": DEFAULT_TENANT.name, "language": DEFAULT_TENANT.language,
+                    "agent_name": DEFAULT_TENANT.agent_name},
+        "tenants": [t.public_dict() for tid, t in load_tenants().items() if tid != "default"],
     }
     with _WRITE_LOCK:
         tmp = p.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
         tmp.replace(p)
-    logger.info("Saved %d tenants to %s", len(payload["tenants"]), p)
+    logger.info("Exported %d tenants to %s", len(payload["tenants"]), p)
 
 
-def upsert_tenant(data: dict) -> TenantConfig:
+def upsert_tenant(data: dict, *, create_only: bool = False) -> TenantConfig:
     """Create or update a client from a dict, persist, and return the config.
 
     `id` is derived from the name if absent. Editing keeps the same id.
-    Blank password/fields on update preserve the existing value where sensible.
+    A non-empty `password` or a change of `active` bumps `session_version`,
+    which logs the client out everywhere (auth checks it on every request).
     """
-    incoming_id = (data.get("id") or "").strip()
-    if not incoming_id:
-        incoming_id = slugify(data.get("name", ""))
+    incoming_id = slugify((data.get("id") or "").strip() or data.get("name", ""))
     if incoming_id == "default":
         raise ValueError("'default' is reserved")
-
-    existing = _TENANTS.get(incoming_id)
+    existing = _read(incoming_id)
+    if existing is not None and create_only:
+        raise TenantExists(f"client '{incoming_id}' already exists")
+    now = time.time()
     if existing is not None:
-        # Merge: only overwrite keys actually provided (non-None).
         merged = existing.public_dict()
         for k, v in data.items():
             if v is not None:
                 merged[k] = v
         cfg = _tenant_from_dict(merged, fallback_id=incoming_id)
+        cfg.call_key = existing.call_key or secrets.token_hex(16)
+        cfg.created_at = existing.created_at or now
+        bump = bool(data.get("password")) or (
+            data.get("active") is not None and bool(data["active"]) != existing.active
+        )
+        cfg.session_version = existing.session_version + (1 if bump else 0)
     else:
         cfg = _tenant_from_dict(data, fallback_id=incoming_id)
-
+        cfg.call_key = secrets.token_hex(16)
+        cfg.session_version = 1
+        cfg.created_at = now
     cfg.id = incoming_id
-    # Never persist a password in the clear — hashing here covers both the admin
-    # portal and any hand-edited tenants.json that gets re-saved.
+    cfg.updated_at = now
     cfg.password = passwords.ensure_hashed(cfg.password)
-    _TENANTS[incoming_id] = cfg
-    save_tenants()
+    _write(cfg)
     return cfg
+
+
+def bump_session(tenant_id: str) -> int:
+    """Invalidate every session of this client. Returns the new version."""
+    cfg = _read(slugify(tenant_id))
+    if cfg is None:
+        raise KeyError(tenant_id)
+    cfg.session_version += 1
+    cfg.updated_at = time.time()
+    _write(cfg)
+    return cfg.session_version
+
+
+def rotate_call_key(tenant_id: str) -> str:
+    """Issue a new public call key; old embeds stop working at once."""
+    cfg = _read(slugify(tenant_id))
+    if cfg is None:
+        raise KeyError(tenant_id)
+    cfg.call_key = secrets.token_hex(16)
+    cfg.updated_at = time.time()
+    _write(cfg)
+    return cfg.call_key
 
 
 def delete_tenant(tenant_id: str) -> bool:
     """Remove a client. Returns True if it existed."""
-    if tenant_id == "default":
+    tid = slugify(tenant_id)
+    if tid == "default":
         raise ValueError("cannot delete the default tenant")
-    if tenant_id in _TENANTS:
-        del _TENANTS[tenant_id]
-        save_tenants()
-        return True
-    return False
+    with _WRITE_LOCK:
+        cur = _conn().execute("DELETE FROM tenants WHERE id = ?", (tid,))
+        _conn().commit()
+    return cur.rowcount > 0
 
-
-# ── Lookups ──────────────────────────────────────────────────────────────────
 
 def list_tenants(include_default: bool = False) -> list[dict]:
     """Return tenants as a list of dicts (for the admin API — secrets stripped)."""
     return [
         t.safe_dict()
-        for tid, t in _TENANTS.items()
+        for tid, t in load_tenants().items()
         if include_default or tid != "default"
     ]
 
 
 def get_tenant(tenant_id: str) -> TenantConfig | None:
-    """Look up a client by id slug. Returns None if unknown."""
-    return _TENANTS.get(tenant_id)
+    """Look up a client by id slug (case and spacing tolerant). None if unknown."""
+    if not tenant_id:
+        return None
+    tid = slugify(tenant_id)
+    if tid == "default":
+        return _default()
+    return _read(tid)
 
 
 def get_tenant_for_number(phone_number: str) -> TenantConfig:
     """Look up tenant by called phone number (SIP). Returns default if unknown."""
     if not phone_number:
-        return _TENANTS.get("default", DEFAULT_TENANT)
+        return _default()
     num = _normalize_number(phone_number)
     digits = "".join(c for c in num if c.isdigit())
-    for t in _TENANTS.values():
-        if t.id == "default" or not t.phone_number:
-            continue
+    rows = _conn().execute("SELECT * FROM tenants WHERE phone_number != ''").fetchall()
+    for row in rows:
+        t = _row_to_cfg(row)
         t_digits = "".join(c for c in t.phone_number if c.isdigit())
         if t_digits and t_digits == digits:
             return t
     logger.info("No tenant for number %r — using default", phone_number)
-    return _TENANTS.get("default", DEFAULT_TENANT)
+    return _default()
 
 
 def get_tenant_from_metadata(metadata) -> TenantConfig:
@@ -323,26 +393,28 @@ def get_tenant_from_metadata(metadata) -> TenantConfig:
     Anything else → default.
     """
     if not metadata:
-        return _TENANTS.get("default", DEFAULT_TENANT)
+        return _default()
 
     if isinstance(metadata, (bytes, bytearray)):
         try:
             metadata = metadata.decode("utf-8", errors="ignore")
         except Exception:
-            return _TENANTS.get("default", DEFAULT_TENANT)
+            return _default()
 
     try:
         data = json.loads(metadata) if isinstance(metadata, str) else metadata
     except Exception:
-        return _TENANTS.get("default", DEFAULT_TENANT)
+        return _default()
 
     if not isinstance(data, dict):
-        return _TENANTS.get("default", DEFAULT_TENANT)
+        return _default()
 
     # Resolve by client id slug first.
     tid = (data.get("tenant") or data.get("client_id") or "").strip()
-    if tid and tid in _TENANTS:
-        return _TENANTS[tid]
+    if tid:
+        found = get_tenant(tid)
+        if found is not None and found.id != "default":
+            return found
 
     # Then by phone number (SIP).
     num = data.get("phone_number") or ""
@@ -352,7 +424,7 @@ def get_tenant_from_metadata(metadata) -> TenantConfig:
     # Browser-test shortcut: language only, no client attribution.
     lang = data.get("language")
     if lang in ("hi", "te", "en"):
-        base = _TENANTS.get("default", DEFAULT_TENANT)
+        base = _default()
         return TenantConfig(
             id="default",
             name=base.name,
@@ -360,4 +432,4 @@ def get_tenant_from_metadata(metadata) -> TenantConfig:
             agent_name=base.agent_name,
         )
 
-    return _TENANTS.get("default", DEFAULT_TENANT)
+    return _default()

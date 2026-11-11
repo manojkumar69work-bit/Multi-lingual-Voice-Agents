@@ -17,3 +17,7 @@ contacts.json
 /tmp/
 logs/
 *.log
+tenants.json.imported
+tenants.export.json
+.superpowers/
+dump.rdb

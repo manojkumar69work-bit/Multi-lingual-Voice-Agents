@@ -369,7 +369,9 @@ def admin_create_client(body: ClientUpsert, _admin=Depends(auth.require_admin)):
     if not data.get("name") and not data.get("id"):
         raise HTTPException(status_code=400, detail="name or id required")
     try:
-        cfg = tenants.upsert_tenant(data)
+        cfg = tenants.upsert_tenant(data, create_only=True)
+    except tenants.TenantExists:
+        raise HTTPException(status_code=409, detail="A client with this id already exists")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"client": cfg.safe_dict()}

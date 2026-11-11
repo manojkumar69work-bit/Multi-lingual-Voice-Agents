@@ -55,6 +55,17 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_calls_status ON calls(status);
         CREATE INDEX IF NOT EXISTS idx_calls_created ON calls(created_at);
         CREATE INDEX IF NOT EXISTS idx_calls_client ON calls(client_id);
+        CREATE TABLE IF NOT EXISTS tenants (
+            id TEXT PRIMARY KEY, name TEXT DEFAULT '', language TEXT DEFAULT 'hi', mode TEXT DEFAULT 'business',
+            agent_name TEXT DEFAULT 'Riya', system_prompt TEXT DEFAULT '', business_info TEXT DEFAULT '',
+            greeting TEXT DEFAULT '', phone_number TEXT DEFAULT '', password TEXT DEFAULT '',
+            whatsapp_to TEXT DEFAULT '', sheet_id TEXT DEFAULT '', webhook_url TEXT DEFAULT '', webhook_secret TEXT DEFAULT '',
+            minute_quota INTEGER DEFAULT 0, enforce_quota INTEGER DEFAULT 0, active INTEGER DEFAULT 1,
+            business_type TEXT DEFAULT '', role_description TEXT DEFAULT '', lead_fields TEXT DEFAULT '',
+            closing_instructions TEXT DEFAULT '', call_key TEXT DEFAULT '', session_version INTEGER DEFAULT 1,
+            created_at REAL, updated_at REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tenants_phone ON tenants(phone_number);
     """)
     # Idempotent migration for databases created before these columns existed.
     existing = {r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()}

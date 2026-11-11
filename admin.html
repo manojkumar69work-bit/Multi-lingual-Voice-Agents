@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin · MEA Voice Agent</title>
-  <link rel="stylesheet" href="/static/app.css" />
-  <script src="/static/portal.js"></script>
+  <link rel="stylesheet" href="/static/app.css?v=x1" />
+  <script src="/static/portal.js?v=x1"></script>
   <style>
     .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
     .live-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; text-align: left; font: inherit; color: inherit; }
@@ -46,6 +46,7 @@
       <button data-view="tester" data-icon="mic">Test caller</button>
       <button data-view="voices" data-icon="live">Voice samples</button>
     </nav>
+    <button class="btn rail-cta" onclick="openClient()">Add client</button>
     <div class="rail-foot">
       <div class="who"><b>Operator</b><span>admin</span></div>
       <div class="row">

@@ -123,6 +123,22 @@ async def _reap_stalled_calls(stop: asyncio.Event) -> None:
 
 
 app = FastAPI(lifespan=lifespan)
+# Public mode: when this machine is shared through a tunnel, visitors reach
+# only what a caller needs. The operator console stays on localhost.
+PUBLIC_CALLS_ONLY = os.environ.get("PUBLIC_CALLS_ONLY", "0") == "1"
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+_PUBLIC_PREFIXES = ("/call/", "/api/call/", "/api/livekit/token", "/static/", "/demo/call")
+
+
+@app.middleware("http")
+async def _public_calls_only(request: Request, call_next):
+    if PUBLIC_CALLS_ONLY:
+        host = (request.headers.get("host") or "").split(":")[0].lower()
+        if host not in _LOCAL_HOSTS and not request.url.path.startswith(_PUBLIC_PREFIXES):
+            return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

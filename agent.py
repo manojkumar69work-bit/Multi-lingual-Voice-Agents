@@ -208,7 +208,11 @@ TTS_PACE = float(os.environ.get("TTS_PACE", "1.0"))
 # Telugu words carry more syllables per word than Hindi, so the same pace value
 # lands much faster in the ear and the voice starts slurring conjuncts
 # (అపాయింట్‌మెంట్, కావాలంటే). Tune by ear with TTS_PACE_TE in .env.
-TTS_PACE_BY_LANG = {"te": float(os.environ.get("TTS_PACE_TE", "0.95"))}
+# Per-language pace from languages.py, overridable with TTS_PACE_<CODE>.
+TTS_PACE_BY_LANG = {
+    L.code: float(os.environ.get(f"TTS_PACE_{L.code.upper()}", L.pace))
+    for L in languages.LANGUAGES.values()
+}
 
 # Bulbul v3 sampling temperature (0.01–2.0, model default 0.6). This is what
 # governs prosodic variation: too low reads flat and identical every turn, too

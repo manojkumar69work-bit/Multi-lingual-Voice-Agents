@@ -36,21 +36,32 @@ class Language:
     script: tuple[str, str] | None  # Unicode block (first, last) of the native script; None for Latin
     greeting: str        # first line; {agent_name} and {biz_type} are filled in
     unavailable: str     # spoken when a client is over quota
+    sarvam_model: str = "bulbul:v3"   # bulbul:v4-flash where a conversational persona exists
+    pace: float = 1.0                 # Sarvam pace for live calls, chosen by ear
 
     @property
     def speaker(self) -> str:
         return os.environ.get(f"TTS_VOICE_{self.code.upper()}", self.speaker_female)
 
+    @property
+    def model(self) -> str:
+        return os.environ.get(f"TTS_MODEL_{self.code.upper()}", self.sarvam_model)
+
 
 _ROWS = [
-    Language("hi", "Hinglish", "Hindi · Roman", "hi-IN", "priya", "shubh", "hi-IN-SwaraNeural",
+    # Hindi and Telugu use Bulbul v4-flash conversational personas, picked by
+    # ear on 2026-11-11 (static/voice_ab.html): Kavya at her native pace,
+    # Kavitha at 1.2× — she reads a little slowly for a receptionist.
+    Language("hi", "Hinglish", "Hindi · Roman", "hi-IN", "kavya_hi_conversational", "aayan_hi_conversational", "hi-IN-SwaraNeural",
              ("ऀ", "ॿ"),
              "Namaste! Main {agent_name} bol rahi hoon, aapki {biz_type} assistant. Aapka shubh naam kya hai?",
-             "Maaf kijiye, abhi service uplabdh nahi hai. Kripya baad mein call karein."),
-    Language("te", "Telugu", "తెలుగు", "te-IN", "neha", "shubh", "te-IN-ShrutiNeural",
+             "Maaf kijiye, abhi service uplabdh nahi hai. Kripya baad mein call karein.",
+             sarvam_model="bulbul:v4-flash", pace=1.0),
+    Language("te", "Telugu", "తెలుగు", "te-IN", "kavitha_te_conversation", "tarun_te_narration", "te-IN-ShrutiNeural",
              ("ఀ", "౿"),
              "నమస్కారం! నేను {agent_name}ని, మీ {biz_type} assistantని. చెప్పండి, మీ పేరు ఏంటి?",
-             "క్షమించండి, ప్రస్తుతం service అందుబాటులో లేదు. దయచేసి తర్వాత call చేయండి."),
+             "క్షమించండి, ప్రస్తుతం service అందుబాటులో లేదు. దయచేసి తర్వాత call చేయండి.",
+             sarvam_model="bulbul:v4-flash", pace=1.2),
     Language("en", "English", "English", "en-IN", "ishita", "ratan", "en-IN-NeerjaNeural",
              None,
              "Hi! I'm {agent_name}, your {biz_type} assistant. What's your name?",

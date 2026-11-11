@@ -55,10 +55,11 @@ logger = logging.getLogger("tts")
 class VoiceProfile:
     """A single voice configuration across providers."""
     language: str          # "hi" / "te" / "en"
-    sarvam_speaker: str    # Sarvam Bulbul v3 speaker (case-sensitive lowercase)
+    sarvam_speaker: str    # Sarvam speaker: a v3 name or a v4-flash persona id
     sarvam_lang: str       # Sarvam target_language_code (e.g., "hi-IN")
     edge_voice: str        # Microsoft Edge TTS voice
     quality_tier: int      # 1 = best, lower is better. 99 = unknown.
+    sarvam_model: str = "bulbul:v3"   # the Bulbul model this speaker belongs to
 
 
 # Sarvam's own per-language speaker recommendations, which are chosen on
@@ -77,6 +78,7 @@ DEFAULT_VOICES: dict[str, VoiceProfile] = {
         sarvam_lang=L.sarvam_code,
         edge_voice=L.edge_voice,
         quality_tier=1,
+        sarvam_model=L.model,           # honours TTS_MODEL_<CODE>
     )
     for L in languages.LANGUAGES.values()
 }
@@ -343,15 +345,14 @@ class SarvamProvider(TTSProvider):
         try:
             kwargs = dict(
                 text=text,
-                model="bulbul:v3",
+                model=profile.sarvam_model,
                 target_language_code=profile.sarvam_lang,
                 speaker=speaker,
             )
             if pace is not None:
                 kwargs["pace"] = pace
-            # v3-only. Sent unconditionally would break a v2 fallback, so it is
-            # tied to the model string above.
-            if temperature is not None:
+            # temperature is a v3 knob; v4-flash personas carry their own style.
+            if temperature is not None and profile.sarvam_model.endswith("v3"):
                 kwargs["temperature"] = temperature
             resp = self.client.text_to_speech.convert(**kwargs)
             # Response shape varies by SDK version — try common access patterns

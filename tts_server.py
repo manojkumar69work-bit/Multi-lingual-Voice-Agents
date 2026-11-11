@@ -64,7 +64,15 @@ DEFAULT_PACE = float(os.environ.get("TTS_PACE", "1.0"))
 # (the REST docs claim MP3-only, which is stale), so the audio arrives as raw
 # PCM and no ffmpeg decode is needed anywhere in the call path.
 SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
+# Default model; each language's profile (languages.py) may name its own, e.g.
+# bulbul:v4-flash for Hindi and Telugu personas.
 SARVAM_MODEL = os.environ.get("SARVAM_TTS_MODEL", "bulbul:v3")
+
+
+def _sarvam_ws_url(model: str) -> str:
+    return f"wss://api.sarvam.ai/text-to-speech/ws?model={model}"
+
+
 SARVAM_WS_URL = (
     f"wss://api.sarvam.ai/text-to-speech/ws?model={SARVAM_MODEL}"
     "&send_completion_event=true"
@@ -277,10 +285,11 @@ async def _sarvam_ws_pcm(
     can — once a byte of the response body is out, the format is committed.
     """
     profile = DEFAULT_VOICES.get(lang) or DEFAULT_VOICES["hi"]
+    model = profile.sarvam_model or SARVAM_MODEL
     config = {
         "target_language_code": profile.sarvam_lang,
         "speaker": voice or profile.sarvam_speaker,
-        "model": SARVAM_MODEL,
+        "model": model,
         "pace": pace,
         "speech_sample_rate": STREAM_SAMPLE_RATE,
         "output_audio_codec": "linear16",
@@ -288,11 +297,11 @@ async def _sarvam_ws_pcm(
         "max_chunk_length": SARVAM_MAX_CHUNK,
     }
     # temperature is v3-only; sending it to v2 is an error rather than a no-op.
-    if SARVAM_MODEL.endswith("v3"):
+    if model.endswith("v3"):
         config["temperature"] = temperature
 
     async with websockets.connect(
-        SARVAM_WS_URL, additional_headers={"api-subscription-key": SARVAM_API_KEY}
+        _sarvam_ws_url(model), additional_headers={"api-subscription-key": SARVAM_API_KEY}
     ) as ws:
         await ws.send(json.dumps({"type": "config", "data": config}))
         # The whole reply in one go — Sarvam buffers it per min_buffer_size, and

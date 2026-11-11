@@ -74,6 +74,38 @@
    "speaker": "priya",
    "file": "en_bulbul-v3_priya.wav",
    "ms": 2602
+  },
+  {
+   "lang": "te",
+   "model": "local preview · 1.1× faster (not re-rendered, credits at zero)",
+   "speaker": "kavitha_te_conversation ×1.1",
+   "file": "te_preview_kavitha_x1.1.wav",
+   "ms": 0,
+   "secs": 11.6
+  },
+  {
+   "lang": "te",
+   "model": "local preview · 1.2× faster (not re-rendered, credits at zero)",
+   "speaker": "kavitha_te_conversation ×1.2",
+   "file": "te_preview_kavitha_x1.2.wav",
+   "ms": 0,
+   "secs": 10.6
+  },
+  {
+   "lang": "te",
+   "model": "local preview · 1.3× faster (not re-rendered, credits at zero)",
+   "speaker": "kavitha_te_conversation ×1.3",
+   "file": "te_preview_kavitha_x1.3.wav",
+   "ms": 0,
+   "secs": 9.8
+  },
+  {
+   "lang": "te",
+   "model": "local preview · 1.4× faster (not re-rendered, credits at zero)",
+   "speaker": "kavitha_te_conversation ×1.4",
+   "file": "te_preview_kavitha_x1.4.wav",
+   "ms": 0,
+   "secs": 9.1
   }
  ]
 }

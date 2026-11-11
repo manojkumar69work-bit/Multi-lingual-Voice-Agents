@@ -1530,6 +1530,10 @@ async def session_decline(ctx: JobContext, tenant) -> None:
 
 
 if __name__ == "__main__":
+    # Heartbeat from the worker process itself: prewarm only runs once a job
+    # process is spawned, which in dev mode is not until the first call, so the
+    # admin strip would otherwise say "never seen" on a healthy idle worker.
+    threading.Thread(target=_heartbeat_forever, name="heartbeat", daemon=True).start()
     cli.run_app(
         WorkerOptions(
             entrypoint_fnc=entrypoint,

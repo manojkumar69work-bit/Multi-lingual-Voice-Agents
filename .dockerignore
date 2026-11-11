@@ -1,0 +1,17 @@
+.venv*/
+__pycache__/
+*.pyc
+.git/
+.superpowers/
+logs/
+recordings/
+calls.db*
+dump.rdb
+*.wav
+*.log
+.env
+.env.*
+!.env.production.example
+tenants.json.imported
+tenants.export.json
+static/voices/

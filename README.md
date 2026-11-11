@@ -279,6 +279,12 @@ Open **http://localhost:8000** in a browser → click the green call button.
 
 ---
 
+## Deploying
+
+One Docker image, run as three services beside LiveKit, Redis and Caddy. See
+[`DEPLOY.md`](./DEPLOY.md) for the compose file, the ports, the secrets and the
+backup cron.
+
 ## SIP Trunk Setup (Planned)
 
 For real inbound phone calls:

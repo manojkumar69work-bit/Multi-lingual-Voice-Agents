@@ -1,0 +1,95 @@
+# Production stack: one voice-agent image run three ways, LiveKit + Redis for
+# calls, Caddy for HTTPS. Secrets and the domain come from .env (see
+# .env.production.example). Data persists in ./data.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml logs -f agent
+#
+name: voice-agent
+
+x-app: &app
+  image: voice-agent:latest
+  build: .
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    APP_ENV: production
+    COOKIE_SECURE: "1"
+    TRUST_PROXY: "1"
+    LIVEKIT_URL: wss://${DOMAIN}
+    LOCAL_TTS_URL: http://tts:8002
+    CALL_DB_PATH: /app/data/calls.db
+    RECORDINGS_DIR: /app/data/recordings
+  volumes:
+    - ./data:/app/data
+
+services:
+  server:
+    <<: *app
+    command: ["server"]
+    depends_on: [tts, livekit]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  tts:
+    <<: *app
+    command: ["tts"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  agent:
+    <<: *app
+    command: ["agent"]
+    depends_on: [tts, livekit]
+
+  livekit-config:
+    <<: *app
+    command: ["livekit"]
+    restart: "no"
+    volumes:
+      - livekit-config:/out
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    depends_on:
+      livekit-config:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    ports:
+      - "7881:7881"
+      - "50000-50100:50000-50100/udp"
+    volumes:
+      - livekit-config:/etc:ro
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [server, livekit]
+
+volumes:
+  livekit-config:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,79 @@
+{
+ "lines": {
+  "hi": "Namaste! Main Riya bol rahi hoon, Apollo Clinic ki assistant. Aapka appointment kal subah 10:30 baje confirm ho gaya hai, Dr. Mehta ke saath. Kuch aur poochna hai?",
+  "te": "నమస్కారం! నేను Riyaని, Apollo Clinic assistantని. మీ appointment రేపు ఉదయం 10:30కి Dr. Mehta గారితో confirm అయింది. ఇంకేమైనా కావాలా?",
+  "en": "Hi! I'm Riya from Apollo Clinic. Your appointment is confirmed for tomorrow at 10:30 with Dr. Mehta. Is there anything else I can help you with?"
+ },
+ "samples": [
+  {
+   "lang": "hi",
+   "model": "bulbul:v3",
+   "speaker": "priya",
+   "file": "hi_bulbul-v3_priya.wav",
+   "ms": 3173
+  },
+  {
+   "lang": "hi",
+   "model": "bulbul:v3",
+   "speaker": "suhani",
+   "file": "hi_bulbul-v3_suhani.wav",
+   "ms": 3175
+  },
+  {
+   "lang": "hi",
+   "model": "bulbul:v4-flash",
+   "speaker": "kavya_hi_conversational",
+   "file": "hi_bulbul-v4-flash_kavya_hi_conversational.wav",
+   "ms": 2133
+  },
+  {
+   "lang": "hi",
+   "model": "bulbul:v4-flash",
+   "speaker": "aayan_hi_conversational",
+   "file": "hi_bulbul-v4-flash_aayan_hi_conversational.wav",
+   "ms": 2049
+  },
+  {
+   "lang": "te",
+   "model": "bulbul:v3",
+   "speaker": "neha",
+   "file": "te_bulbul-v3_neha.wav",
+   "ms": 2895
+  },
+  {
+   "lang": "te",
+   "model": "bulbul:v3",
+   "speaker": "priya",
+   "file": "te_bulbul-v3_priya.wav",
+   "ms": 2416
+  },
+  {
+   "lang": "te",
+   "model": "bulbul:v4-flash",
+   "speaker": "kavitha_te_conversation",
+   "file": "te_bulbul-v4-flash_kavitha_te_conversation.wav",
+   "ms": 2534
+  },
+  {
+   "lang": "te",
+   "model": "bulbul:v4-flash",
+   "speaker": "pooja_te_conversation",
+   "file": "te_bulbul-v4-flash_pooja_te_conversation.wav",
+   "ms": 2068
+  },
+  {
+   "lang": "en",
+   "model": "bulbul:v3",
+   "speaker": "ishita",
+   "file": "en_bulbul-v3_ishita.wav",
+   "ms": 2068
+  },
+  {
+   "lang": "en",
+   "model": "bulbul:v3",
+   "speaker": "priya",
+   "file": "en_bulbul-v3_priya.wav",
+   "ms": 2602
+  }
+ ]
+}

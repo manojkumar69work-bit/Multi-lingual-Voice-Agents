@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice pick · MEA Voice</title>
+<link rel="stylesheet" href="/static/app.css?v=x1">
+<style>
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; font-weight: 800; margin-bottom: 4px; }
+  .lead { color: var(--muted); font-size: 14px; margin-bottom: 22px; }
+  h2 { font-size: 17px; font-weight: 800; margin: 26px 0 6px; }
+  .line { color: var(--ink-2); font-size: 14.5px; margin-bottom: 10px; }
+  .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .row b { display: block; font-size: 15px; }
+  .row small { color: var(--muted); font-size: 13px; }
+  .row.cur b::after { content: ' · in use now'; color: var(--caller); font-weight: 400; font-size: 13px; }
+  audio { width: 260px; height: 36px; }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } audio { width: 100%; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Which voice?</h1>
+  <p class="lead">Same sentence, each candidate. The first row per language is what callers hear today.</p>
+  <div id="list"></div>
+</div>
+<script>
+const NAMES = { hi: 'Hinglish', te: 'Telugu', en: 'English' };
+fetch('/static/voices/ab/manifest.json').then(r => r.json()).then(m => {
+  const by = {};
+  for (const s of m.samples) (by[s.lang] ||= []).push(s);
+  document.getElementById('list').innerHTML = Object.entries(by).map(([lang, rows]) => `
+    <h2>${NAMES[lang] || lang}</h2>
+    <div class="line">“${m.lines[lang]}”</div>
+    ${rows.map((s, i) => `<div class="row ${i === 0 ? 'cur' : ''}"><div><b>${s.speaker}</b><small>${s.model} · ${s.ms} ms to render</small></div><audio controls preload="none" src="/static/voices/ab/${s.file}"></audio></div>`).join('')}
+  `).join('');
+});
+</script>
+</body>
+</html>

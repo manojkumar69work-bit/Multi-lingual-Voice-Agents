@@ -67,6 +67,10 @@ def init_db():
             created_at REAL, updated_at REAL
         );
         CREATE INDEX IF NOT EXISTS idx_tenants_phone ON tenants(phone_number);
+        CREATE TABLE IF NOT EXISTS heartbeats (
+            name TEXT PRIMARY KEY,
+            ts   REAL NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS login_attempts (
             key TEXT NOT NULL,
             ts  REAL NOT NULL
@@ -300,6 +304,25 @@ def iter_calls(client_id: str):
         (client_id,),
     ):
         yield _row_to_dict(r)
+
+
+def heartbeat(name: str) -> None:
+    """Record that a process (the agent worker) is alive right now."""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO heartbeats (name, ts) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET ts=excluded.ts",
+        (name, time.time()),
+    )
+    conn.commit()
+
+
+def last_heartbeat(name: str) -> float | None:
+    row = _get_conn().execute("SELECT ts FROM heartbeats WHERE name = ?", (name,)).fetchone()
+    return float(row["ts"]) if row else None
+
+
+def count_status(status: str) -> int:
+    return _get_conn().execute("SELECT COUNT(*) FROM calls WHERE status = ?", (status,)).fetchone()[0]
 
 
 def mark_stalled(older_than_seconds: float) -> int:

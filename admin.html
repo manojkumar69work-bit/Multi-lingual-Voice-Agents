@@ -69,6 +69,10 @@
         <div><div class="v" id="kMin">–</div><div class="k">Minutes, all time</div></div>
         <div><div class="v" id="kLive">–</div><div class="k">On the line now</div></div>
       </div>
+      <div class="panel pad" id="healthPanel" style="margin-bottom:16px">
+        <div class="panel-title"><h3>System</h3><span id="healthStamp">Checking…</span></div>
+        <div class="actions" id="health" style="flex-wrap:wrap"></div>
+      </div>
       <div class="two">
         <div class="panel pad">
           <div class="panel-title"><h3>Calls per day, all clients</h3><span>Last 14 days</span></div>
@@ -287,9 +291,25 @@ async function load() {
   renderClients();
   renderCalls();
   renderDelivery();
+  fetch('/api/health').then(r => r.json()).then(renderHealth).catch(() => renderHealth(null));
   $('stamp').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
 }
 const clientName = (id) => { const c = CLIENTS.find(x => x.id === id); return c ? (c.name || c.id) : id === 'default' ? 'Demo agent' : id ? id : 'Unassigned'; };
+
+// ── System health (from /api/health; 503 when a call could not be answered) ──
+function renderHealth(h) {
+  const el = $('health');
+  if (!h) { el.innerHTML = '<span class="badge bad">Server unreachable</span>'; $('healthStamp').textContent = ''; return; }
+  const chip = (label, state) => `<span class="badge ${state === 'ok' ? 'ok' : 'bad'}">${label}: ${state === 'ok' ? 'up' : 'down'}</span>`;
+  const seen = h.worker_seen_at ? (Date.now() - new Date(h.worker_seen_at)) / 1000 : null;
+  const worker = seen === null ? '<span class="badge bad">Agent worker: never seen</span>'
+    : seen < 90 ? '<span class="badge ok">Agent worker: up</span>' : `<span class="badge bad">Agent worker: silent ${P.dur(seen)}</span>`;
+  el.innerHTML = [chip('Voice', h.tts), chip('Calls', h.livekit), chip('Database', h.db), worker,
+    h.queue_pending ? `<span class="badge warn">${h.queue_pending} lead${h.queue_pending === 1 ? '' : 's'} waiting to send</span>` : '',
+    h.queue_dead ? `<a class="badge bad" href="#delivery">${h.queue_dead} lead send${h.queue_dead === 1 ? '' : 's'} gave up</a>` : '',
+    h.stalled ? `<span class="badge warn">${h.stalled} stalled call${h.stalled === 1 ? '' : 's'}</span>` : ''].join(' ');
+  $('healthStamp').textContent = h.ok ? 'All systems answering' : 'Calls cannot be answered right now';
+}
 
 // ── Overview ──
 function renderOverview(ov) {
@@ -359,8 +379,9 @@ function renderClients() {
       <td class="r">${P.num(c.lead_count)} <span class="muted mono">${c.calls ? rate + '%' : ''}</span></td>
       <td><span class="mono">${P.mins(c.month_minutes)}${c.minute_quota ? ' / ' + P.num(c.minute_quota) : ''}</span>
         ${c.minute_quota ? `<div class="quota mini-quota ${pct >= 100 ? 'over' : pct >= 80 ? 'hot' : ''}"><i style="width:${pct}%"></i></div>` : ''}</td>
-      <td>${c.active === false ? '<span class="badge">Paused</span>' : '<span class="badge ok">Answering</span>'}</td>
-      <td class="r"><button class="btn ghost sm" data-edit="${P.esc(c.id)}">Edit</button></td>
+      <td>${c.active === false ? '<span class="badge">Paused</span>' : '<span class="badge ok">Answering</span>'}
+        <button class="btn ghost sm" data-toggle="${P.esc(c.id)}" data-active="${c.active !== false}" title="${c.active === false ? 'Start answering calls again' : 'Stop answering calls and sign the client out'}">${c.active === false ? 'Resume' : 'Pause'}</button></td>
+      <td class="r"><button class="btn ghost sm" data-link="${P.esc(c.id)}" title="Copy the public call link">Link</button> <button class="btn ghost sm" data-edit="${P.esc(c.id)}">Edit</button></td>
     </tr>`;
   }).join('') || '<tr><td colspan="7" class="empty">No client matches that search.</td></tr>'}</tbody>`;
   $('clientTable').querySelectorAll('tr.click').forEach(r => r.addEventListener('click', (e) => {
@@ -530,6 +551,23 @@ async function deleteClient() {
   try { await P.api('/api/admin/clients/' + encodeURIComponent(editing.id), { method: 'DELETE' }); P.toast('Client deleted'); closeClient(); load(); }
   catch (e) { $('dErr').textContent = e.message; }
 }
+
+// Pause/resume and copy-link buttons in the client table. Capture phase, so
+// the row's own click (which opens the drawer) never fires for these.
+$('clientTable').addEventListener('click', async (e) => {
+  const tg = e.target.closest('[data-toggle]'), ln = e.target.closest('[data-link]');
+  if (!tg && !ln) return;
+  e.stopPropagation(); e.preventDefault();
+  if (ln) {
+    const url = location.origin + '/call/' + encodeURIComponent(ln.dataset.link);
+    try { await navigator.clipboard.writeText(url); P.toast('Call link copied'); } catch (_) { prompt('Call link', url); }
+    return;
+  }
+  const active = tg.dataset.active === 'true';
+  if (active && !confirm('Pause this client? The agent stops answering their calls and the client is signed out of the portal.')) return;
+  try { await P.api('/api/admin/clients/' + encodeURIComponent(tg.dataset.toggle), { method: 'PUT', body: { active: !active } }); P.toast(active ? 'Paused' : 'Answering again'); load(); }
+  catch (err) { P.toast(err.message, true); }
+}, true);
 
 // ── Wiring ──
 $('cq').addEventListener('input', renderClients);

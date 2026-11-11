@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import wave
 
@@ -1166,8 +1167,22 @@ class VoiceAgent(Agent):
             yield frame
 
 
+HEARTBEAT_SECONDS = 30
+
+
+def _heartbeat_forever() -> None:
+    """Tell the operator console this worker is alive, every 30 s."""
+    while True:
+        try:
+            call_store.heartbeat("agent")
+        except Exception as e:
+            logger.debug(f"heartbeat failed: {e}")
+        time.sleep(HEARTBEAT_SECONDS)
+
+
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
+    threading.Thread(target=_heartbeat_forever, name="heartbeat", daemon=True).start()
 
     # Semantic end-of-turn detection, loaded here so the first caller doesn't pay
     # for it. v1-mini runs locally on CPU (<500 MB, no LiveKit Cloud account), so

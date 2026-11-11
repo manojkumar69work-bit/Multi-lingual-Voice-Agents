@@ -295,7 +295,9 @@ def queue_stats(client_id: str | None = None) -> dict:
     sql += " GROUP BY status"
     counts = {r["status"]: r["n"] for r in conn.execute(sql, params).fetchall()}
     return {
-        "pending": counts.get("pending", 0),
+        # 'sending' is a pending row a worker has picked up; to a person it is
+        # still "not delivered yet".
+        "pending": counts.get("pending", 0) + counts.get("sending", 0),
         "delivered": counts.get("delivered", 0),
         "dead": counts.get("dead", 0),
     }

@@ -17,6 +17,7 @@ load_dotenv()
 
 import asyncio
 import csv
+import httpx
 import hmac
 import io
 import json
@@ -50,6 +51,7 @@ TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 WHATSAPP_TO = os.environ.get("WHATSAPP_TO", "")
 
 LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "ws://localhost:7880")
+LOCAL_TTS_URL = os.environ.get("LOCAL_TTS_URL", "http://localhost:8002")
 LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "secret")
 
@@ -273,14 +275,49 @@ def voice_file(filename: str):
 
 # ─── Routes: health + LiveKit token ──────────────────────────────────────────
 
+def _probe(url: str) -> str:
+    """"ok" when the URL answers any HTTP status within 2 s, else "down"."""
+    try:
+        httpx.get(url, timeout=2.0)
+        return "ok"
+    except Exception:
+        return "down"
+
+
 @app.get("/api/health")
-def health():
+def health(response: Response):
+    """What the operator needs to know at a glance. 503 when any dependency a
+    call needs (TTS, LiveKit, the database) is down."""
     lead_channels = []
     if SHEETS_ID and SHEETS_CREDENTIALS:
         lead_channels.append("sheets")
     if TWILIO_SID and WHATSAPP_TO:
         lead_channels.append("whatsapp")
-    return {"status": "ok", "groq_configured": bool(GROQ_API_KEY), "lead_channels": lead_channels}
+    try:
+        call_store.get_conn().execute("SELECT 1").fetchone()
+        db = "ok"
+    except Exception:
+        db = "down"
+    tts = _probe(f"{LOCAL_TTS_URL}/health")
+    livekit = _probe(_livekit_http_url())
+    queue = lead_delivery.queue_stats() if db == "ok" else {}
+    seen = call_store.last_heartbeat("agent") if db == "ok" else None
+    ok = db == "ok" and tts == "ok" and livekit == "ok"
+    if not ok:
+        response.status_code = 503
+    return {
+        "ok": ok,
+        "status": "ok" if ok else "degraded",
+        "tts": tts,
+        "livekit": livekit,
+        "db": db,
+        "queue_pending": queue.get("pending", 0),
+        "queue_dead": queue.get("dead", 0),
+        "stalled": call_store.count_status("stalled") if db == "ok" else 0,
+        "worker_seen_at": datetime.fromtimestamp(seen, tz=timezone.utc).isoformat() if seen else None,
+        "groq_configured": bool(GROQ_API_KEY),
+        "lead_channels": lead_channels,
+    }
 
 
 @app.post("/api/contact")

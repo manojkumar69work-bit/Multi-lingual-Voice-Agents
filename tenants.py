@@ -22,7 +22,7 @@ import logging
 import os
 import re
 import threading
-from dataclasses import dataclass, field, asdict, fields
+from dataclasses import dataclass, field, asdict, fields, replace
 import secrets
 import time
 from pathlib import Path
@@ -73,6 +73,8 @@ class TenantConfig:
     role_description: str = ""          # e.g. "a professional real estate consultant", "a polite medical receptionist"
     lead_fields: str = ""               # comma-separated field list, e.g. "name,property_type,budget,location,timeline,notes"
     closing_instructions: str = ""      # optional custom closing behavior; blank uses generic fallback
+    call_languages: str = ""            # languages callers may pick: "" = primary only, "all", or "hi,te,ta"
+    greetings: str = ""                 # JSON {"te": "...", "ta": "..."}: first line per picked language
     call_key: str = ""                  # public key for the client's call page / widget (32 hex)
     session_version: int = 1            # bumped on password change or pause; client JWTs carry it
     created_at: float = 0.0
@@ -169,6 +171,8 @@ def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
         role_description=d.get("role_description", ""),
         lead_fields=d.get("lead_fields", ""),
         closing_instructions=d.get("closing_instructions", ""),
+        call_languages=d.get("call_languages", "") or "",
+        greetings=d.get("greetings", "") or "",
         call_key=d.get("call_key", "") or "",
         session_version=int(d.get("session_version", 1) or 1),
         created_at=float(d.get("created_at", 0) or 0),
@@ -400,6 +404,40 @@ SIP_CALLED_ATTR = "sip.trunkPhoneNumber"   # the number that was dialled (ours)
 SIP_CALLER_ATTR = "sip.phoneNumber"        # the caller's number
 
 
+def allowed_languages(t: TenantConfig) -> list[str]:
+    """Languages a caller may pick for this client, primary language first.
+    Blank → only the primary; "all" → every language Sarvam speaks here."""
+    raw = (t.call_languages or "").strip().lower()
+    if raw == "all":
+        picked = languages.codes()
+    else:
+        picked = [c.strip() for c in raw.split(",") if c.strip() in languages.LANGUAGES]
+    out = [t.language]
+    for c in picked:
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def greeting_for(t: TenantConfig, lang: str) -> str:
+    """The client's own first line for `lang`, or "" for the built-in one."""
+    try:
+        per_lang = json.loads(t.greetings) if t.greetings else {}
+    except (ValueError, TypeError):
+        per_lang = {}
+    if isinstance(per_lang, dict) and (per_lang.get(lang) or "").strip():
+        return per_lang[lang].strip()
+    return t.greeting if lang == t.language else ""
+
+
+def _metadata_language(metadata) -> str:
+    try:
+        data = json.loads(metadata) if isinstance(metadata, (str, bytes, bytearray)) else (metadata or {})
+    except (ValueError, TypeError):
+        return ""
+    return (data.get("language") or "").strip().lower() if isinstance(data, dict) else ""
+
+
 def resolve_tenant(metadata, attributes: dict | None = None) -> tuple[TenantConfig, str]:
     """Which client a call belongs to, and who is calling.
 
@@ -413,6 +451,11 @@ def resolve_tenant(metadata, attributes: dict | None = None) -> tuple[TenantConf
     tenant = get_tenant_from_metadata(metadata)
     if tenant.id == "default" and called:
         tenant = get_tenant_for_number(called)
+    # A caller who picked a language on the call page: that call only runs in
+    # it, if the client offers it. The stored client is not changed.
+    lang = _metadata_language(metadata)
+    if tenant.id != "default" and lang and lang != tenant.language and lang in allowed_languages(tenant):
+        tenant = replace(tenant, language=lang, greeting=greeting_for(tenant, lang))
     return tenant, caller
 
 

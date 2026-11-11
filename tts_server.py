@@ -70,7 +70,10 @@ SARVAM_MODEL = os.environ.get("SARVAM_TTS_MODEL", "bulbul:v3")
 
 
 def _sarvam_ws_url(model: str) -> str:
-    return f"wss://api.sarvam.ai/text-to-speech/ws?model={model}"
+    # send_completion_event: Sarvam only emits the "final" event when asked in
+    # the URL. Without it the loop below waits out SARVAM_FRAME_TIMEOUT (20 s)
+    # after every reply before the next one can start.
+    return f"wss://api.sarvam.ai/text-to-speech/ws?model={model}&send_completion_event=true"
 
 
 SARVAM_WS_URL = (

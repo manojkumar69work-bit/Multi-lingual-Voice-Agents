@@ -88,6 +88,14 @@ def init_db():
     ):
         if col not in existing:
             conn.execute(ddl)
+    # Tenant columns added after the tenants table first shipped.
+    tcols = {r[1] for r in conn.execute("PRAGMA table_info(tenants)").fetchall()}
+    for col, ddl in (
+        ("call_languages", "ALTER TABLE tenants ADD COLUMN call_languages TEXT DEFAULT ''"),
+        ("greetings", "ALTER TABLE tenants ADD COLUMN greetings TEXT DEFAULT ''"),
+    ):
+        if col not in tcols:
+            conn.execute(ddl)
     conn.commit()
 
 # Columns that may be supplied to upsert_call, with their serializers.

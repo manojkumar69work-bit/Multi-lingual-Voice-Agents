@@ -1072,6 +1072,21 @@ def _build_lead_extract_prompt(lead_fields: list[str], business_type: str = "") 
     )
 
 
+def _lead_extract_body(prompt: str, model: str) -> dict:
+    """Chat request for lead extraction. JSON mode, and room for the answer:
+    gpt-oss reasons before it writes, and at 300 tokens it ran out mid-JSON."""
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 800,
+        "response_format": {"type": "json_object"},
+    }
+    if "gpt-oss" in model:
+        body["reasoning_effort"] = "low"
+    return body
+
+
 async def extract_lead(transcript: list[dict], tenant) -> dict | None:
     if not transcript:
         return None
@@ -1089,12 +1104,7 @@ async def extract_lead(transcript: list[dict], tenant) -> dict | None:
             resp = await client.post(
                 f"{GROQ_BASE}/chat/completions",
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": LEAD_EXTRACT_MODEL,
-                    "messages": [{"role": "user", "content": prompt.format(history=history_text)}],
-                    "temperature": 0.1,
-                    "max_tokens": 300,
-                },
+                json=_lead_extract_body(prompt.format(history=history_text), LEAD_EXTRACT_MODEL),
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
@@ -1429,8 +1439,11 @@ async def entrypoint(ctx: JobContext):
         # Hinglish/English replies are already Latin and pass through unchanged.
         try:
             display_text = romanize(str(text))
+            # `native` is the line as spoken, in its own script: the public call
+            # page shows that to the caller; the portals keep the Latin `text`.
             payload = json.dumps(
-                {"type": "transcript", "role": role, "text": display_text}
+                {"type": "transcript", "role": role, "text": display_text, "native": str(text)},
+                ensure_ascii=False,
             ).encode("utf-8")
             asyncio.create_task(
                 ctx.room.local_participant.publish_data(

@@ -211,8 +211,12 @@
       <div class="hint">Open chat ignores business type, details to collect and the closing. The built-in script and greeting exist in every language.</div>
       <label for="f_role_description">How the agent should come across</label>
       <input id="f_role_description" placeholder="a warm, professional real estate consultant" />
+      <div class="label">Languages callers can pick <span class="opt">(the main language above is always on)</span></div>
+      <div class="langchecks" id="f_call_languages"></div>
       <label for="f_greeting">First line on every call <span class="opt">(blank uses the built-in greeting)</span></label>
       <input id="f_greeting" placeholder="Namaste! Mumbai Realty mein aapka swagat hai, main Riya bol rahi hoon." />
+      <label for="f_greetings">First line in the other languages <span class="opt">(one per line, like <span class="mono">te: నమస్కారం…</span>; blank lines use the built-in)</span></label>
+      <textarea id="f_greetings" rows="3" placeholder="te: నమస్కారం! నేను Riya…&#10;ta: வணக்கம்! நான் Riya…"></textarea>
       <div class="prompt-preview" id="greetPreview"></div>
       <label for="f_lead_fields">Details to collect from each caller <span class="opt">(comma-separated)</span></label>
       <input id="f_lead_fields" placeholder="name,phone,property_type,budget,location,timeline,notes" />
@@ -487,6 +491,7 @@ function openClient(id = null, startTab = 'agent') {
   $('dTitle').textContent = editing ? (c.name || c.id) : 'Add client';
   $('dSub').textContent = editing ? `${c.id} · ${P.num(c.calls)} calls · ${P.num(c.lead_count)} leads` : 'Set up the agent, then give the client a login.';
   for (const [el, key] of Object.entries(FIELDS)) $(el).value = c[key] ?? '';
+  renderLangChecks(c);
   if (!editing) $('f_language').value = 'hi';
   if (!$('f_mode').value) $('f_mode').value = 'business';
   $('f_slug').value = c.id || ''; $('f_slug').disabled = !!editing;
@@ -527,9 +532,28 @@ async function loadDrawerCalls(id) {
   $('dList').querySelectorAll('.call-item').forEach(b => b.addEventListener('click', () => { closeClient(); ALL.find(x => x.session_id === b.dataset.id) || ALL.push(drawerCalls.find(x => x.session_id === b.dataset.id)); location.hash = 'calls/' + b.dataset.id; }));
 }
 
+// Languages a caller may choose on the call page, and a first line per language.
+function renderLangChecks(c) {
+  const on = new Set(String(c.call_languages || '').toLowerCase() === 'all' ? Object.keys(LANG) : String(c.call_languages || '').split(',').map(x => x.trim()));
+  $('f_call_languages').innerHTML = Object.entries(LANG).map(([k, v]) =>
+    `<label class="check" style="margin:6px 14px 0 0;display:inline-flex"><input type="checkbox" value="${k}" ${on.has(k) ? 'checked' : ''}/> ${P.esc(v.split(' — ')[0])}</label>`).join('');
+  let g = {}; try { g = JSON.parse(c.greetings || '{}') || {}; } catch (_) {}
+  $('f_greetings').value = Object.entries(g).map(([k, v]) => `${k}: ${v}`).join('\n');
+}
+function readLangFields(body) {
+  const picked = [...$('f_call_languages').querySelectorAll('input:checked')].map(i => i.value);
+  body.call_languages = picked.length === Object.keys(LANG).length ? 'all' : picked.join(',');
+  const g = {};
+  for (const line of $('f_greetings').value.split('\n')) {
+    const m = line.match(/^\s*([a-z]{2})\s*:\s*(.+)$/); if (m && LANG[m[1]]) g[m[1]] = m[2].trim();
+  }
+  body.greetings = JSON.stringify(g);
+}
+
 async function saveClient() {
   const body = {};
   for (const [el, key] of Object.entries(FIELDS)) body[key] = $(el).value.trim();
+  readLangFields(body);
   body.minute_quota = parseInt($('f_quota').value || '0', 10);
   body.enforce_quota = $('f_enforce').checked;
   body.active = $('f_active').checked;

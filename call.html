@@ -37,6 +37,13 @@
     .convo-body { flex: 1; overflow-y: auto; padding: 18px 20px; scroll-behavior: smooth; }
     .tips { color: var(--muted); font-size: 14.5px; max-width: 46ch; margin: auto; padding: 30px 0; }
     .tips b { color: var(--ink); font-family: var(--f-display); font-size: 18px; display: block; margin-bottom: 8px; }
+    .langs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .langs button { padding: 8px 14px; border: 1px solid var(--line-2); border-radius: 9999px; background: transparent; cursor: pointer; font-size: 14px; font-weight: 700; color: var(--ink); }
+    .langs button small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+    .langs button[aria-pressed="true"] { background: var(--caller); border-color: var(--caller); color: #fff; }
+    .langs button[aria-pressed="true"] small { color: rgba(255,255,255,.8); }
+    .langs button:disabled { opacity: .45; cursor: not-allowed; }
+    .live-line { min-height: 22px; font-size: 14px; color: var(--muted); }
     .gone { margin: auto; max-width: 46ch; text-align: center; padding: 60px 20px; color: var(--muted); }
     .gone b { display: block; color: var(--ink); font-family: var(--f-display); font-size: 22px; margin-bottom: 8px; }
   </style>
@@ -52,6 +59,10 @@
     <div>
       <h1 id="who">Talk to our assistant</h1>
       <p class="lede" id="whoSub">Press the button and speak normally, like a phone call.</p>
+    </div>
+    <div id="langPick" hidden>
+      <div class="label" style="margin-top:0">Speak in</div>
+      <div class="langs" role="group" aria-label="Language" id="langs"></div>
     </div>
     <div class="state">
       <div class="state-word" id="state" aria-live="polite">Ready</div>
@@ -70,7 +81,7 @@
       <div class="row"><h2>Conversation</h2><span class="key"><span style="--c:var(--caller)">You</span><span style="--c:var(--agent)" id="keyAgent">Assistant</span></span></div>
     </div>
     <div class="convo-body" id="body">
-      <div class="tips" id="tips"><b>Start the call</b>The assistant greets you first, then asks how it can help.</div>
+      <div class="tips" id="tips"><b>Start the call</b>The assistant greets you first, then asks how it can help. Everything said appears here as you talk.</div>
     </div>
   </section>
 </main>
@@ -78,7 +89,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const slug = decodeURIComponent(location.pathname.split('/').pop());
-let cfg = null, room = null, live = false, turns = [], started = 0, tick = null;
+let cfg = null, room = null, live = false, turns = [], started = 0, tick = null, lang = '';
 const dec = new TextDecoder();
 
 function setState(kind, text) { $('state').className = 'state-word ' + kind; $('state').textContent = text; }
@@ -86,6 +97,7 @@ const STATES = { listening: ['listening', 'Listening'], thinking: ['thinking', '
 function fromAgentState(s) { const m = STATES[s]; if (m) setState(m[0], typeof m[1] === 'function' ? m[1]() : m[1]); }
 function addTurn(role, text) {
   if (!text) return;
+  text = String(text);
   $('tips').hidden = true;
   turns.push({ role: role === 'user' ? 'user' : 'assistant', content: text });
   $('body').insertAdjacentHTML('beforeend', P.transcriptHTML([turns[turns.length - 1]], cfg.agent_name).replace('<div class="transcript">', '<div class="transcript" style="margin-top:10px">'));
@@ -103,9 +115,9 @@ $('mute').onclick = async () => {
 async function start() {
   $('err').textContent = '';
   turns = []; $('body').querySelectorAll('.transcript').forEach(n => n.remove());
-  $('dial').disabled = true; setState('thinking', 'Connecting…');
+  $('dial').disabled = true; lockLangs(true); setState('thinking', 'Connecting…');
   try {
-    const res = await fetch('/api/livekit/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: cfg.client_id, call_key: cfg.call_key }) });
+    const res = await fetch('/api/livekit/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: cfg.client_id, call_key: cfg.call_key, language: lang }) });
     if (!res.ok) throw new Error('the server refused the call (' + res.status + ')');
     const { token, url } = await res.json();
     const L = LivekitClient;
@@ -113,7 +125,8 @@ async function start() {
     room.on(L.RoomEvent.TrackSubscribed, (track) => { if (track.kind === 'audio') track.attach(); });
     room.on(L.RoomEvent.ParticipantConnected, () => setState('thinking', `${cfg.agent_name} is joining…`));
     room.on(L.RoomEvent.ParticipantAttributesChanged, (changed, p) => { if (!p.isLocal && changed['lk.agent.state']) fromAgentState(changed['lk.agent.state']); });
-    room.on(L.RoomEvent.DataReceived, (payload) => { try { const m = JSON.parse(dec.decode(payload)); if (m.type === 'transcript') addTurn(m.role, m.text); } catch (_) {} });
+    // Show the line in the language it was spoken (native script) for the caller.
+    room.on(L.RoomEvent.DataReceived, (payload) => { try { const m = JSON.parse(dec.decode(payload)); if (m.type === 'transcript') addTurn(m.role, lang === 'hi' ? m.text : (m.native || m.text)); } catch (_) {} });
     room.on(L.RoomEvent.ConnectionStateChanged, (s) => {
       if (s === L.ConnectionState.Reconnecting) setState('thinking', 'Reconnecting…');
       if (s === L.ConnectionState.Disconnected && live) hangUp('The call dropped');
@@ -128,7 +141,7 @@ async function start() {
     $('err').textContent = /Permission|NotAllowed/i.test(e.name + e.message)
       ? 'Microphone blocked. Allow microphone access in your browser, then try again.'
       : 'Couldn’t connect: ' + e.message + '. Please try again in a moment.';
-    setState('', 'Ready'); $('dial').disabled = false;
+    setState('', 'Ready'); $('dial').disabled = false; lockLangs(false);
     if (room) { try { room.disconnect(); } catch (_) {} room = null; }
   }
 }
@@ -137,10 +150,22 @@ function hangUp(label) {
   if (room) { try { room.disconnect(); } catch (_) {} room = null; }
   $('dial').className = 'btn dial start'; $('dial').textContent = 'Start call';
   $('mute').disabled = true; $('mute').setAttribute('aria-pressed', 'false'); $('mute').textContent = 'Mute';
-  setState('', label);
+  setState('', label); lockLangs(false);
   $('clock').textContent = started ? `Lasted ${P.dur((Date.now() - started) / 1000)}` : 'Not connected';
 }
 window.addEventListener('beforeunload', () => { if (room) room.disconnect(); });
+
+function lockLangs(on) { document.querySelectorAll('#langs button').forEach(b => b.disabled = on); }
+function renderLangs() {
+  const list = cfg.languages || [];
+  $('langPick').hidden = list.length < 2;
+  $('langs').innerHTML = list.map(l => `<button type="button" data-lang="${P.esc(l.code)}" aria-pressed="${l.code === lang}">${P.esc(l.native)}${l.native !== l.name ? `<small>${P.esc(l.name)}</small>` : ''}</button>`).join('');
+}
+$('langs').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b || live) return;
+  lang = b.dataset.lang;
+  $('langs').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+});
 
 (async () => {
   P.mountChrome();
@@ -153,6 +178,7 @@ window.addEventListener('beforeunload', () => { if (room) room.disconnect(); });
     $('who').textContent = 'Talk to ' + cfg.agent_name;
     $('whoSub').textContent = `${cfg.name}'s voice assistant. Press the button and speak normally, like a phone call.`;
     $('keyAgent').textContent = cfg.agent_name;
+    lang = cfg.language; renderLangs();
   } catch (_) {
     $('app').innerHTML = '<div class="gone"><b>No agent is answering here</b>This link is no longer active. Please contact the business directly.</div>';
   }

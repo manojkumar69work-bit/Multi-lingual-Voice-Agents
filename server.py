@@ -164,7 +164,7 @@ class LiveKitTokenRequest(BaseModel):
     room: str = ""
     client_id: str = ""        # tag the test call to a client (or "" for default)
     call_key: str | None = None  # the client's public call key (call page / widget)
-    language: str = ""         # browser-test language shortcut when no client
+    language: str = ""         # the caller's pick on the call page, or an admin test call's language
 
 
 class LoginRequest(BaseModel):
@@ -186,6 +186,8 @@ class LeadUpdate(BaseModel):
 
 
 class ClientUpsert(BaseModel):
+    call_languages: str | None = None
+    greetings: str | None = None
     id: str | None = None
     name: str | None = None
     language: str | None = None
@@ -273,6 +275,10 @@ def call_config(slug: str):
         "name": t.name or t.id,
         "agent_name": t.agent_name or "Riya",
         "language": t.language,
+        "languages": [
+            {"code": c, "name": languages.get(c).name, "native": languages.get(c).native}
+            for c in tenants.allowed_languages(t)
+        ],
         "call_key": t.call_key,
     }
 
@@ -423,6 +429,10 @@ async def livekit_token(req: LiveKitTokenRequest, request: Request, user=Depends
                 raise HTTPException(status_code=429, detail="All lines are busy right now. Please try again in a minute.")
             auth.record_login_failure(tok_key)   # same table: one row per issued token
         metadata["tenant"] = t.id
+        if req.language and req.language != t.language:
+            if req.language not in tenants.allowed_languages(t):
+                raise HTTPException(status_code=422, detail="This agent does not speak that language")
+            metadata["language"] = req.language
     elif req.language in languages.LANGUAGES:
         if role != "admin":
             raise HTTPException(status_code=401, detail="Sign in as admin to run a test call")

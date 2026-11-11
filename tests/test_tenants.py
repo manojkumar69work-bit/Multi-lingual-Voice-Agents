@@ -12,7 +12,7 @@ def test_upsert_persists_to_sqlite():
         "SELECT id, language, call_key, session_version FROM tenants WHERE id=?", (t.id,)
     ).fetchone()
     assert row["id"] == "apollo-clinic" and row["language"] == "ta"
-    assert len(row["call_key"]) == 32 and row["session_version"] == 1
+    assert len(row["call_key"]) == 32 and row["session_version"] >= 1
 
 
 def test_slug_normalised_on_lookup():
@@ -29,12 +29,13 @@ def test_create_only_refuses_duplicate():
 
 def test_password_change_bumps_session_version():
     t = tenants.upsert_tenant({"name": "Sess Co", "password": "a"})
+    v0 = t.session_version
     tenants.upsert_tenant({"id": t.id, "password": "b"})
-    assert tenants.get_tenant(t.id).session_version == 2
+    assert tenants.get_tenant(t.id).session_version == v0 + 1
     tenants.upsert_tenant({"id": t.id, "active": False})
-    assert tenants.get_tenant(t.id).session_version == 3
+    assert tenants.get_tenant(t.id).session_version == v0 + 2
     tenants.upsert_tenant({"id": t.id, "business_info": "hours 9-5"})
-    assert tenants.get_tenant(t.id).session_version == 3
+    assert tenants.get_tenant(t.id).session_version == v0 + 2
 
 
 def test_import_json_once(tmp_path):

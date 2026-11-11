@@ -227,6 +227,8 @@ TURN_DETECTION_ENABLED = os.environ.get("TURN_DETECTION", "1") not in ("0", "fal
 TURN_DETECTION_LANGS = {"hi", "en"}
 
 LEAD_EXTRACT_MODEL = CHAT_MODEL
+# How long to wait for the caller to appear before resolving the client.
+PARTICIPANT_WAIT_SECONDS = float(os.environ.get("PARTICIPANT_WAIT_SECONDS", "10"))
 # After the first lead delivery, re-extract every N assistant turns.
 LEAD_REEXTRACT_TURNS = int(os.environ.get("LEAD_REEXTRACT_TURNS", "4"))
 
@@ -1014,6 +1016,16 @@ def merge_lead(old: dict, new: dict) -> tuple[dict, bool]:
     return merged, changed
 
 
+def _coerce_lead(data: dict, lead_fields: list[str]) -> dict:
+    """Extractor JSON → {field: str}. A JSON null is an unknown, not the word
+    "None": left as "", it cannot overwrite a real value in merge_lead."""
+    out = {}
+    for k in lead_fields:
+        v = (data or {}).get(k, "")
+        out[k] = "" if v is None else str(v).strip()
+    return out
+
+
 def _parse_lead_fields(lead_fields_str: str) -> list[str]:
     """Normalize a comma-separated lead_fields string into a clean list."""
     if not lead_fields_str:
@@ -1063,7 +1075,7 @@ async def extract_lead(transcript: list[dict], tenant) -> dict | None:
             content = re.sub(r'^```(?:json)?\s*', '', content.strip())
             content = re.sub(r'\s*```$', '', content)
             data = json.loads(content)
-            lead = {k: str(data.get(k, "")) for k in lead_fields}
+            lead = _coerce_lead(data, lead_fields)
             logger.info(f"Lead extracted: {lead}")
             return lead
     except Exception as e:
@@ -1212,13 +1224,25 @@ async def entrypoint(ctx: JobContext):
     # for real phone calls, or by server.py for browser tests).
     # A SIP caller carries its numbers as participant attributes; a browser
     # caller carries nothing, and the room metadata names the client instead.
+    # On SIP the caller usually joins after the agent, so wait for them before
+    # reading the numbers; a browser caller is already in the room.
     sip_attrs: dict = {}
+    room_meta = getattr(ctx.room, "metadata", None)
+    if tenants.get_tenant_from_metadata(room_meta).id == "default":
+        try:
+            await asyncio.wait_for(ctx.wait_for_participant(), timeout=PARTICIPANT_WAIT_SECONDS)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.debug(f"no participant yet: {e}")
     for p in getattr(ctx.room, "remote_participants", {}).values():
         attrs = dict(getattr(p, "attributes", {}) or {})
         if attrs.get(tenants.SIP_CALLED_ATTR) or attrs.get(tenants.SIP_CALLER_ATTR):
             sip_attrs = attrs
             break
-    tenant, caller_phone = tenants.resolve_tenant(getattr(ctx.room, "metadata", None), sip_attrs)
+    tenant, caller_phone = tenants.resolve_tenant(room_meta, sip_attrs)
+    if tenant.id != "default" and not tenant.active:
+        logger.warning(f"Client {tenant.id} is paused — declining call {ctx.room.name}")
+        await session_decline(ctx, tenant)
+        return
     logger.info(
         f"Call from {ctx.room.name} → tenant={tenant.name!r} "
         f"lang={tenant.language} agent={tenant.agent_name}"

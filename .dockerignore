@@ -14,4 +14,3 @@ dump.rdb
 !.env.production.example
 tenants.json.imported
 tenants.export.json
-static/voices/

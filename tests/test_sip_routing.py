@@ -29,7 +29,9 @@ def test_browser_call_has_no_caller(client_with_number):
     assert t.id == "num-co" and caller == ""
 
 
-def test_paused_client_number_falls_to_default(client_with_number):
+def test_paused_client_number_still_resolves_to_them(client_with_number):
+    # The agent declines the call as the paused client (see agent.py entrypoint)
+    # rather than answering as the demo agent.
     tenants.upsert_tenant({"id": "num-co", "active": False})
     t, _ = tenants.resolve_tenant(None, {"sip.trunkPhoneNumber": "+911234567890"})
-    assert t.id == "default"
+    assert t.id == "num-co" and t.active is False

@@ -216,6 +216,10 @@ def import_json_if_empty(path: str | None = None) -> int:
     renamed to `<name>.imported` afterwards so it is never imported twice and
     never mistaken for the live config."""
     p = Path(path or _TENANTS_PATH)
+    if os.environ.get("APP_ENV", "development").lower() == "production":
+        # The seed file holds demo clients with placeholder passwords; never
+        # let it create internet-reachable logins.
+        return 0
     count = _conn().execute("SELECT COUNT(*) FROM tenants").fetchone()[0]
     if count or not p.exists():
         return 0
@@ -304,7 +308,9 @@ def upsert_tenant(data: dict, *, create_only: bool = False) -> TenantConfig:
     else:
         cfg = _tenant_from_dict(data, fallback_id=incoming_id)
         cfg.call_key = secrets.token_hex(16)
-        cfg.session_version = 1
+        # A random start, so a slug deleted and recreated (even within the same
+        # second) never repeats a version an old cookie still carries.
+        cfg.session_version = secrets.randbelow(2**31) + 1
         cfg.created_at = now
     cfg.id = incoming_id
     cfg.updated_at = now
@@ -342,6 +348,12 @@ def delete_tenant(tenant_id: str) -> bool:
         raise ValueError("cannot delete the default tenant")
     with _WRITE_LOCK:
         cur = _conn().execute("DELETE FROM tenants WHERE id = ?", (tid,))
+        if cur.rowcount:
+            # Keep the history, but under an id no new client can be given, so a
+            # client created later with the same slug never sees it.
+            archive = f"{tid}#deleted-{int(time.time())}"
+            _conn().execute("UPDATE calls SET client_id = ? WHERE client_id = ?", (archive, tid))
+            _conn().execute("UPDATE lead_deliveries SET client_id = ? WHERE client_id = ?", (archive, tid))
         _conn().commit()
     return cur.rowcount > 0
 
@@ -371,7 +383,9 @@ def get_tenant_for_number(phone_number: str) -> TenantConfig:
         return _default()
     num = _normalize_number(phone_number)
     digits = "".join(c for c in num if c.isdigit())
-    rows = _conn().execute("SELECT * FROM tenants WHERE phone_number != '' AND active = 1").fetchall()
+    # Paused clients still own their number: the agent declines the call as
+    # them rather than answering as the demo agent.
+    rows = _conn().execute("SELECT * FROM tenants WHERE phone_number != ''").fetchall()
     for row in rows:
         t = _row_to_cfg(row)
         t_digits = "".join(c for c in t.phone_number if c.isdigit())

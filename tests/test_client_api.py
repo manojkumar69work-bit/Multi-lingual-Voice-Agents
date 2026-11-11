@@ -93,12 +93,13 @@ def test_export_quotes_and_unicode(portal):
           transcript=[{"role": "user", "content": "నమస్కారం"}], summary='Said "hi", then left')
     r = portal.get("/api/client/export.csv")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
-    rows = list(csv.reader(io.StringIO(r.text)))
-    assert rows[0][:5] == ["session_id", "started_at", "duration_seconds", "caller_phone", "lead_status"]
-    assert rows[0][5:8] == ["name", "symptom", "notes"]
-    row = rows[1]
-    assert row[0] == "a" and row[5] == "'=HYPERLINK(\"x\")" and row[6] == 'fever, "high"'
-    assert row[-2] == 'Said "hi", then left'
+    rows = list(csv.reader(io.StringIO(r.text.lstrip("\ufeff"))))
+    assert rows[0][:6] == ["session_id", "started_at", "duration_seconds", "caller_phone", "lead_status", "lead_notes"]
+    assert rows[0][6:9] == ["name", "symptom", "notes"]
+    row = dict(zip(rows[0], rows[1]))
+    assert row["session_id"] == "a" and row["name"] == "'=HYPERLINK(\"x\")" and row["symptom"] == 'fever, "high"'
+    assert row["summary"] == 'Said "hi", then left'
+    assert "నమస్కారం" in row["transcript"]
 
 
 def test_daily_counts_after_hours(portal):

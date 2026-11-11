@@ -16,8 +16,13 @@ x-app: &app
     APP_ENV: production
     COOKIE_SECURE: "1"
     TRUST_PROXY: "1"
-    LIVEKIT_URL: wss://${DOMAIN}
+    # Server and agent reach LiveKit inside the network; browsers get the
+    # public wss:// URL from the token endpoint.
+    LIVEKIT_URL: ws://livekit:7880
+    LIVEKIT_PUBLIC_URL: wss://${DOMAIN}
+    LIVEKIT_INTERNAL_URL: http://livekit:7880
     LOCAL_TTS_URL: http://tts:8002
+    DEMO_CLIENT_ID: ${DEMO_CLIENT_ID:-}
     CALL_DB_PATH: /app/data/calls.db
     RECORDINGS_DIR: /app/data/recordings
   volumes:
@@ -58,7 +63,7 @@ services:
   livekit:
     image: livekit/livekit-server:latest
     restart: unless-stopped
-    command: --config /etc/livekit.yaml
+    command: --config /config/livekit.yaml
     depends_on:
       livekit-config:
         condition: service_completed_successfully
@@ -68,7 +73,25 @@ services:
       - "7881:7881"
       - "50000-50100:50000-50100/udp"
     volumes:
-      - livekit-config:/etc:ro
+      - livekit-config:/config:ro
+
+  # SIP bridge: phone calls arrive here from the carrier trunk and are placed
+  # into LiveKit rooms per PHONE_SETUP.md. Ports 5060/udp (signalling) and
+  # 10000–10100/udp (audio) must be open on the host.
+  sip:
+    image: livekit/sip:latest
+    restart: unless-stopped
+    command: --config /config/sip.yaml
+    depends_on:
+      livekit-config:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+    ports:
+      - "5060:5060/udp"
+      - "10000-10100:10000-10100/udp"
+    volumes:
+      - livekit-config:/config:ro
 
   redis:
     image: redis:7-alpine

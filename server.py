@@ -24,12 +24,13 @@ import json
 from datetime import datetime, timedelta, timezone
 import logging
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -51,7 +52,16 @@ TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
 WHATSAPP_TO = os.environ.get("WHATSAPP_TO", "")
 
 LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "ws://localhost:7880")
+# What browsers connect to (behind Caddy this is wss://DOMAIN); the server and
+# the agent talk to LiveKit over LIVEKIT_URL directly.
+LIVEKIT_PUBLIC_URL = os.environ.get("LIVEKIT_PUBLIC_URL", LIVEKIT_URL)
 LOCAL_TTS_URL = os.environ.get("LOCAL_TTS_URL", "http://localhost:8002")
+# The client whose call page the landing page's "talk to it" buttons open.
+DEMO_CLIENT_ID = os.environ.get("DEMO_CLIENT_ID", "mumbai-realty")
+# Anonymous call tokens: per-IP issuance cap per 15 minutes, and a cap on how
+# many of one client's calls may be live at once.
+TOKEN_MAX_PER_WINDOW = int(os.environ.get("TOKEN_MAX_PER_WINDOW", "20"))
+MAX_CONCURRENT_CALLS = int(os.environ.get("MAX_CONCURRENT_CALLS", "5"))
 LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "devkey")
 LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "secret")
 
@@ -223,6 +233,12 @@ def _public_tenant(slug: str):
     return t
 
 
+@app.get("/demo/call")
+def demo_call():
+    """Where the landing page sends a prospect: the demo client's call page."""
+    return RedirectResponse(url=f"/call/{DEMO_CLIENT_ID}", status_code=302)
+
+
 @app.get("/call/{slug}")
 def call_page(slug: str):
     """Public call page for one client: what they link to or embed on their site."""
@@ -299,7 +315,7 @@ def health(response: Response):
     except Exception:
         db = "down"
     tts = _probe(f"{LOCAL_TTS_URL}/health")
-    livekit = _probe(_livekit_http_url())
+    livekit = _probe(os.environ.get("LIVEKIT_INTERNAL_URL") or _livekit_http_url())
     queue = lead_delivery.queue_stats() if db == "ok" else {}
     seen = call_store.last_heartbeat("agent") if db == "ok" else None
     ok = db == "ok" and tts == "ok" and livekit == "ok"
@@ -349,7 +365,7 @@ def _livekit_http_url() -> str:
 
 
 @app.post("/api/livekit/token")
-async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user)):
+async def livekit_token(req: LiveKitTokenRequest, request: Request, user=Depends(auth.current_user)):
     """Issue a browser join token. We pre-create the room with metadata
     {"tenant": "<client_id>"} so the agent (which reads room metadata) attributes
     the call to the right client — the exact mechanism a SIP dispatch rule will
@@ -360,10 +376,11 @@ async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user
     page and widget. Nothing else, so nobody can burn a client's minutes by
     guessing its slug."""
     from livekit import api
-    room = req.room or f"call_{uuid.uuid4().hex[:8]}"
+    role = (user or {}).get("role")
+    # Only an operator may pick the room name; everyone else gets a random one.
+    room = (req.room if role == "admin" and req.room else "") or f"call_{uuid.uuid4().hex[:8]}"
     identity = f"user_{uuid.uuid4().hex[:8]}"
 
-    role = (user or {}).get("role")
     metadata = {}
     if req.client_id:
         t = tenants.get_tenant(req.client_id)
@@ -376,6 +393,19 @@ async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user
         )
         if not allowed:
             raise HTTPException(status_code=401, detail="Not allowed to call this client")
+        if role != "admin":
+            # The call key is public by design (it is in the call page), so what
+            # stops a script burning a client's minutes is this pair of caps.
+            tok_key = f"tok:{_client_ip(request)}"
+            n = call_store.get_conn().execute(
+                "SELECT COUNT(*) FROM login_attempts WHERE key = ? AND ts > ?",
+                (tok_key, time.time() - auth.LOGIN_WINDOW_SECONDS),
+            ).fetchone()[0]
+            if n >= TOKEN_MAX_PER_WINDOW:
+                raise HTTPException(status_code=429, detail="Too many calls from this address. Try again later.")
+            if len(call_store.get_active_calls(client_id=t.id)) >= MAX_CONCURRENT_CALLS:
+                raise HTTPException(status_code=429, detail="All lines are busy right now. Please try again in a minute.")
+            auth.record_login_failure(tok_key)   # same table: one row per issued token
         metadata["tenant"] = t.id
     elif req.language in languages.LANGUAGES:
         if role != "admin":
@@ -407,7 +437,7 @@ async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user
         "token": token.to_jwt(),
         "room": room,
         "identity": identity,
-        "url": LIVEKIT_URL,
+        "url": LIVEKIT_PUBLIC_URL,
         "metadata": metadata,
     }
 
@@ -416,7 +446,7 @@ async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest, request: Request):
-    keys = (f"u:{(req.username or '').strip().lower()}", f"ip:{_client_ip(request)}")
+    keys = (auth.login_key(req.username), f"ip:{_client_ip(request)}")
     if any(auth.login_blocked(k) for k in keys):
         raise HTTPException(status_code=429, detail="Too many failed sign-ins. Try again in 15 minutes.")
     user = auth.authenticate(req.username, req.password)
@@ -564,14 +594,14 @@ def client_stats(client_id: str = Depends(auth.require_client)):
 
 
 def _parse_when(value: str | None, *, end: bool = False) -> float | None:
-    """Accept a date (YYYY-MM-DD, taken as the whole day in UTC) or an ISO
-    datetime. Returns an epoch, or None when blank."""
+    """Accept a date (YYYY-MM-DD, taken as the whole day in India time, like
+    the daily chart) or an ISO datetime. Returns an epoch, or None when blank."""
     if not value:
         return None
     v = value.strip()
     try:
         if len(v) == 10:
-            d = datetime.fromisoformat(v).replace(tzinfo=timezone.utc)
+            d = datetime.fromisoformat(v).replace(tzinfo=call_store._IST)
             if end:
                 d = d + timedelta(days=1) - timedelta(microseconds=1)
             return d.timestamp()
@@ -634,19 +664,30 @@ def client_export_csv(client_id: str = Depends(auth.require_client)):
     fields = [f.strip().replace(" ", "_").lower() for f in (t.lead_fields if t else "").split(",") if f.strip()] or ["name", "notes"]
     esc = lead_delivery.escape_cell
 
+    # Read everything on this thread first: a lazy cursor on the thread-local
+    # connection cannot be advanced from whichever thread streams the response.
+    calls = list(call_store.iter_calls(client_id))
+
     def rows():
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["session_id", "started_at", "duration_seconds", "caller_phone", "lead_status", *fields, "summary", "recording"])
+        yield "\ufeff"   # BOM, so Excel reads the Indic text as UTF-8
+        w.writerow(["session_id", "started_at", "duration_seconds", "caller_phone", "lead_status", "lead_notes",
+                    *fields, "summary", "transcript", "recording"])
         yield buf.getvalue(); buf.seek(0); buf.truncate()
-        for c in call_store.iter_calls(client_id):
+        for c in calls:
             ld = c.get("lead_data") or {}
             extra = [k for k in ld if k not in fields]
+            transcript = " / ".join(
+                f"{'Caller' if m.get('role') == 'user' else 'Agent'}: {m.get('content', '')}"
+                for m in (c.get("transcript") or [])
+            )
             w.writerow([
                 c["session_id"], c.get("created_at", ""), int(c.get("duration_seconds") or 0),
-                esc(c.get("caller_phone", "")), c.get("lead_status") or "new",
+                esc(c.get("caller_phone", "")), c.get("lead_status") or "new", esc(c.get("lead_notes", "")),
                 *[esc(ld.get(k, "")) for k in fields],
                 esc(c.get("summary", "")) + ("" if not extra else " | " + "; ".join(f"{k}: {ld[k]}" for k in extra if ld.get(k))),
+                esc(transcript),
                 f"/api/recordings/{c['session_id']}" if c.get("recording_path") else "",
             ])
             yield buf.getvalue(); buf.seek(0); buf.truncate()

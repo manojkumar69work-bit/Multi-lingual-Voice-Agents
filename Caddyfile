@@ -4,7 +4,7 @@
 	encode zstd gzip
 
 	# LiveKit signalling (WebSocket) and its Twirp API share the domain.
-	@livekit path /rtc* /twirp* /validate*
+	@livekit path /rtc* /twirp* /validate* /agent*
 	reverse_proxy @livekit livekit:7880
 
 	reverse_proxy server:8000

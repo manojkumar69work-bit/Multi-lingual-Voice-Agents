@@ -45,6 +45,10 @@ COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "0") == "1"
 
 # Set APP_ENV=production once this is exposed to the internet.
 IS_PRODUCTION = os.environ.get("APP_ENV", "development").lower() == "production"
+# LiveKit's shipped dev key pair: with it public, anyone can mint a room token.
+DEV_LIVEKIT_KEY, DEV_LIVEKIT_SECRET = "devkey", "secret"
+LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", DEV_LIVEKIT_KEY)
+LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", DEV_LIVEKIT_SECRET)
 
 
 def check_config() -> list[str]:
@@ -60,6 +64,8 @@ def check_config() -> list[str]:
         problems.append("ADMIN_PASSWORD is the built-in dev default (admin123)")
     if not COOKIE_SECURE:
         problems.append("COOKIE_SECURE=0 — session cookies will be sent over plain HTTP")
+    if LIVEKIT_API_KEY == DEV_LIVEKIT_KEY or LIVEKIT_API_SECRET == DEV_LIVEKIT_SECRET:
+        problems.append("LIVEKIT_API_KEY/SECRET are the built-in dev pair (devkey/secret) — anyone can join any room")
 
     for p in problems:
         (logger.error if IS_PRODUCTION else logger.warning)("INSECURE CONFIG: %s", p)
@@ -187,6 +193,16 @@ def require_admin(va_session: str | None = Cookie(default=None)) -> dict:
     return data
 
 
+def client_session_valid(data: dict):
+    """The tenant behind a client session, or None when the session must die:
+    paused, deleted, re-passworded, or the slug was deleted and recreated."""
+    sub = data.get("sub") or ""
+    t = tenants.get_tenant(sub)
+    if not t or t.id == "default" or not t.active or data.get("sv") != t.session_version:
+        return None
+    return t
+
+
 def require_client(va_session: str | None = Cookie(default=None)) -> str:
     """Return the authenticated client's client_id (scopes all client queries)."""
     data = _session(va_session)
@@ -194,10 +210,16 @@ def require_client(va_session: str | None = Cookie(default=None)) -> str:
         raise HTTPException(status_code=403, detail="Client access required")
     # A paused, deleted or re-passworded client is signed out on the very next
     # request, not when the cookie expires.
-    t = tenants.get_tenant(data["sub"])
-    if not t or t.id == "default" or not t.active or data.get("sv") != t.session_version:
+    t = client_session_valid(data)
+    if t is None:
         raise HTTPException(status_code=401, detail="Session no longer valid")
     return t.id
+
+
+def login_key(username: str) -> str:
+    """Rate-limit key for a username: the slug it resolves to, so punctuation
+    variants of the same login share one bucket."""
+    return f"u:{tenants.slugify(username or '')}"
 
 
 def current_user(va_session: str | None = Cookie(default=None)) -> dict | None:
@@ -211,6 +233,8 @@ def current_user(va_session: str | None = Cookie(default=None)) -> dict | None:
     sub = data.get("sub", "")
     name = "Administrator"
     if role == "client":
-        t = tenants.get_tenant(sub)
-        name = (t.name if t else "") or sub
+        t = client_session_valid(data)
+        if t is None:
+            return None     # same rule as require_client: a dead session is no session
+        name = t.name or t.id
     return {"role": role, "client_id": sub if role == "client" else "", "name": name}

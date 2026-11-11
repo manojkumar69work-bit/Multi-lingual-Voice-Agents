@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.."
 # Data lives on one volume: the SQLite file and the recordings.
 export CALL_DB_PATH="${CALL_DB_PATH:-/app/data/calls.db}"
 export RECORDINGS_DIR="${RECORDINGS_DIR:-/app/data/recordings}"
-mkdir -p "$(dirname "$CALL_DB_PATH")" "$RECORDINGS_DIR"
+# The config-render mode runs without the data volume; the others need it.
+mkdir -p "$(dirname "$CALL_DB_PATH")" "$RECORDINGS_DIR" 2>/dev/null || true
 
 case "${1:-server}" in
   server)
@@ -23,10 +24,13 @@ case "${1:-server}" in
     # Substitute ${VAR} references in the template without needing envsubst.
     python - <<'PY'
 import os, re, pathlib
-src = pathlib.Path("livekit.yaml.template").read_text()
-out = re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), src)
-pathlib.Path(os.environ.get("LIVEKIT_CONFIG_OUT", "/out/livekit.yaml")).write_text(out)
-print("rendered livekit.yaml")
+out_dir = pathlib.Path(os.environ.get("LIVEKIT_CONFIG_DIR", "/out"))
+out_dir.mkdir(parents=True, exist_ok=True)
+for name in ("livekit.yaml", "sip.yaml"):
+    src = pathlib.Path(name + ".template").read_text()
+    out = re.sub(r"\$\{(\w+)\}", lambda m: os.environ.get(m.group(1), ""), src)
+    (out_dir / name).write_text(out)
+    print("rendered", name)
 PY
     ;;
   *)

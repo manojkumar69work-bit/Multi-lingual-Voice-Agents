@@ -25,11 +25,13 @@ docker compose -f docker-compose.prod.yml up -d
 curl -s https://$DOMAIN/api/health
 ```
 
-`/api/health` returns `"ok": true` once TTS, LiveKit and the database answer and
-the agent worker has sent a heartbeat. The admin console shows the same chips.
+`/api/health` returns `"ok": true` once TTS, LiveKit and the database answer.
+The agent worker's heartbeat is reported separately (`worker_seen_at`); the
+admin console shows all of it as chips. Place one test call before handing
+the link to a client.
 
-Data lives in `./data` (`calls.db`, `recordings/`). The first start imports a
-`tenants.json` if one is present in the image and the table is empty.
+Data lives in `./data` (`calls.db`, `recordings/`). In production the demo
+`tenants.json` is never imported; create clients in the admin console.
 
 ## Backups
 
@@ -37,8 +39,11 @@ Data lives in `./data` (`calls.db`, `recordings/`). The first start imports a
 recordings, keeping 30 days:
 
 ```
-15 2 * * *  cd /opt/voice-agent && scripts/backup.sh ./data ./backups >> backups/backup.log 2>&1
+15 2 * * *  cd /opt/voice-agent && mkdir -p backups && scripts/backup.sh ./data ./backups >> backups/backup.log 2>&1
 ```
+
+The host needs `sqlite3` and `rsync` (`apt-get install sqlite3 rsync`). Run the
+cron as root: the data files are created by the containers.
 
 ## Updating
 
@@ -52,5 +57,9 @@ Client config is in the database, so an update never touches it.
 
 ## Phone numbers
 
-See `PHONE_SETUP.md`. With a trunk pointed at this LiveKit, each client's
-**Phone number** field routes their calls; nothing else changes.
+The stack includes LiveKit's SIP bridge (`sip` service, port 5060/udp and
+10000–10100/udp). Point the carrier trunk at `sip:5060` on this host, create
+the inbound trunk and dispatch rule per `PHONE_SETUP.md`, then put each
+client's number in their **Phone number** field. Demo clients from
+`tenants.json` are never imported in production; set `DEMO_CLIENT_ID` to a
+client you created if the landing page's demo button should work.

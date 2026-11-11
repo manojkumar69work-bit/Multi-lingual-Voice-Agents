@@ -43,8 +43,8 @@
       <button data-view="calls" data-icon="calls">All calls</button>
       <button data-view="delivery" data-icon="send">Lead delivery <span class="n" id="nDeliv"></span></button>
       <div class="nav-label">Tools</div>
-      <a href="/" target="_blank" rel="noopener" data-icon="mic">Test caller</a>
-      <a href="/demo/sarvam" target="_blank" rel="noopener" data-icon="live">Voice samples</a>
+      <button data-view="tester" data-icon="mic">Test caller</button>
+      <button data-view="voices" data-icon="live">Voice samples</button>
     </nav>
     <div class="rail-foot">
       <div class="who"><b>Operator</b><span>admin</span></div>
@@ -132,6 +132,23 @@
     </section>
 
     <!-- ═══ Delivery ═══ -->
+    <!-- ═══ Tools: the test caller and the voice-sample audition, inside the console ═══ -->
+    <section class="view" id="v-tester">
+      <div class="page-head">
+        <div><h1>Test caller</h1><p>Call any client's agent from here. Pick the client inside the caller; the call lands in their portal.</p></div>
+        <div class="actions"><a class="btn ghost sm" href="/" target="_blank" rel="noopener">Open in a new tab</a></div>
+      </div>
+      <div class="panel" style="overflow:hidden"><iframe id="testerFrame" title="Test caller" allow="microphone; autoplay" style="width:100%;height:calc(100vh - 170px);min-height:640px;border:0;display:block"></iframe></div>
+    </section>
+
+    <section class="view" id="v-voices">
+      <div class="page-head">
+        <div><h1>Voice samples</h1><p>Audition every Sarvam speaker in each language before you pick one for a client.</p></div>
+        <div class="actions"><a class="btn ghost sm" href="/demo/sarvam" target="_blank" rel="noopener">Open in a new tab</a></div>
+      </div>
+      <div class="panel" style="overflow:hidden"><iframe id="voicesFrame" title="Voice samples" allow="autoplay" style="width:100%;height:calc(100vh - 170px);min-height:640px;border:0;display:block"></iframe></div>
+    </section>
+
     <section class="view" id="v-delivery">
       <div class="page-head">
         <div><h1>Lead delivery</h1><p>Every lead is queued per destination and retried with backoff. Send a failed one again once its destination is fixed.</p></div>
@@ -580,7 +597,13 @@ $('dFilter').addEventListener('click', (e) => { const b = e.target.closest('butt
   P.mountChrome();
   if (!await P.guard('admin')) return;
   await load().catch(e => P.toast(e.message, true));
-  P.router((v, arg) => { view = v; if (v === 'calls' && arg) showCall(arg); });
+  P.router((v, arg) => {
+    view = v;
+    if (v === 'calls' && arg) showCall(arg);
+    // The two tool views load their page on first open, not at console start.
+    if (v === 'tester' && !$('testerFrame').src) $('testerFrame').src = '/?embedded=1';
+    if (v === 'voices' && !$('voicesFrame').src) $('voicesFrame').src = '/demo/sarvam?embedded=1';
+  });
   P.poll(() => { if (!$('drawer').classList.contains('show')) load().catch(() => {}); }, 5000);
 })();
 </script>

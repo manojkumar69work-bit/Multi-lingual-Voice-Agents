@@ -9,6 +9,7 @@
   <script src="/static/portal.js"></script>
   <style>
     body { min-height: 100vh; display: flex; flex-direction: column; }
+    body.embedded .app { padding-top: 8px; }
     header.bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px clamp(16px, 3vw, 32px); border-bottom: 1px solid var(--line); background: var(--surface); }
     .app { flex: 1; display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 20px clamp(16px, 3vw, 32px); max-width: 1180px; width: 100%; margin: 0 auto; }
     @media (max-width: 900px) { .app { grid-template-columns: 1fr; } }
@@ -129,6 +130,8 @@ const LANG = { hi: 'Hinglish', te: 'Telugu', en: 'English', ta: 'Tamil', kn: 'Ka
 const NATIVE = { hi: 'Roman Hindi', te: 'తెలుగు', en: 'English', ta: 'தமிழ்', kn: 'ಕನ್ನಡ', ml: 'മലയാളം', mr: 'मराठी', bn: 'বাংলা', gu: 'ગુજરાતી', pa: 'ਪੰਜਾਬੀ', od: 'ଓଡ଼ିଆ' };
 document.getElementById('langs').innerHTML = Object.keys(LANG).map(k => `<button data-lang="${k}" aria-pressed="${k === 'hi'}">${LANG[k]}<small>${NATIVE[k]}</small></button>`).join('');
 const params = new URLSearchParams(location.search);
+// Inside the admin console the page is framed: drop the header, the console has its own.
+if (params.get('embedded') === '1') { document.querySelector('header.bar').hidden = true; document.body.classList.add('embedded'); }
 let room = null, live = false, lang = 'hi', clientId = params.get('client') || '', agentName = 'Riya';
 let turns = [], started = 0, tick = null, isAdmin = false, raf = null;
 const dec = new TextDecoder();

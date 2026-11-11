@@ -21,6 +21,7 @@ import time
 import jwt
 from fastapi import Cookie, HTTPException, Response
 
+import call_store
 import passwords
 import tenants
 
@@ -72,9 +73,13 @@ def check_config() -> list[str]:
 
 # ── Token helpers ────────────────────────────────────────────────────────────
 
-def _issue_token(role: str, subject: str) -> str:
+def _issue_token(role: str, subject: str, sv: int = 0) -> str:
     now = int(time.time())
     payload = {"role": role, "sub": subject, "iat": now, "exp": now + SESSION_TTL}
+    if role == "client":
+        # Session version: the tenant row bumps it on password change or pause,
+        # and require_client refuses any cookie that carries an older one.
+        payload["sv"] = int(sv)
     return jwt.encode(payload, SESSION_SECRET, algorithm="HS256")
 
 
@@ -85,8 +90,8 @@ def _decode(token: str) -> dict | None:
         return None
 
 
-def set_session_cookie(response: Response, role: str, subject: str) -> None:
-    token = _issue_token(role, subject)
+def set_session_cookie(response: Response, role: str, subject: str, sv: int = 0) -> None:
+    token = _issue_token(role, subject, sv)
     response.set_cookie(
         COOKIE_NAME,
         token,
@@ -128,9 +133,40 @@ def authenticate(username: str, password: str) -> dict | None:
                     logger.info("Upgraded stored password for client %r to PBKDF2", t.id)
                 except Exception as e:
                     logger.warning("Password upgrade failed for %r: %s", t.id, e)
-            return {"role": "client", "client_id": t.id, "name": t.name or t.id}
-
+            return {"role": "client", "client_id": t.id, "name": t.name or t.id,
+                    "session_version": t.session_version}
     return None
+
+
+# ── Login rate limit ─────────────────────────────────────────────────────────
+# 5 failures within 15 minutes for a key ("u:<username>" or "ip:<addr>") block
+# further attempts until the window passes. Rows live in SQLite so the limit
+# survives restarts and applies across worker processes.
+
+LOGIN_MAX_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 15 * 60
+
+
+def record_login_failure(key: str) -> None:
+    conn = call_store.get_conn()
+    conn.execute("INSERT INTO login_attempts (key, ts) VALUES (?, ?)", (key, time.time()))
+    conn.execute("DELETE FROM login_attempts WHERE ts < ?", (time.time() - LOGIN_WINDOW_SECONDS,))
+    conn.commit()
+
+
+def login_blocked(key: str) -> bool:
+    conn = call_store.get_conn()
+    n = conn.execute(
+        "SELECT COUNT(*) FROM login_attempts WHERE key = ? AND ts > ?",
+        (key, time.time() - LOGIN_WINDOW_SECONDS),
+    ).fetchone()[0]
+    return n >= LOGIN_MAX_FAILURES
+
+
+def clear_login_failures(key: str) -> None:
+    conn = call_store.get_conn()
+    conn.execute("DELETE FROM login_attempts WHERE key = ?", (key,))
+    conn.commit()
 
 
 # ── FastAPI dependencies ─────────────────────────────────────────────────────
@@ -156,7 +192,12 @@ def require_client(va_session: str | None = Cookie(default=None)) -> str:
     data = _session(va_session)
     if data.get("role") != "client" or not data.get("sub"):
         raise HTTPException(status_code=403, detail="Client access required")
-    return data["sub"]
+    # A paused, deleted or re-passworded client is signed out on the very next
+    # request, not when the cookie expires.
+    t = tenants.get_tenant(data["sub"])
+    if not t or t.id == "default" or not t.active or data.get("sv") != t.session_version:
+        raise HTTPException(status_code=401, detail="Session no longer valid")
+    return t.id
 
 
 def current_user(va_session: str | None = Cookie(default=None)) -> dict | None:

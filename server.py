@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -100,9 +101,19 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ─── Models ──────────────────────────────────────────────────────────────────
 
+def _client_ip(request: Request) -> str:
+    """Caller address; behind a reverse proxy, trust X-Forwarded-For when told to."""
+    if os.environ.get("TRUST_PROXY", "0") == "1":
+        fwd = request.headers.get("x-forwarded-for", "")
+        if fwd:
+            return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 class LiveKitTokenRequest(BaseModel):
     room: str = ""
     client_id: str = ""        # tag the test call to a client (or "" for default)
+    call_key: str | None = None  # the client's public call key (call page / widget)
     language: str = ""         # browser-test language shortcut when no client
 
 
@@ -244,20 +255,40 @@ def _livekit_http_url() -> str:
 
 
 @app.post("/api/livekit/token")
-async def livekit_token(req: LiveKitTokenRequest):
+async def livekit_token(req: LiveKitTokenRequest, user=Depends(auth.current_user)):
     """Issue a browser join token. We pre-create the room with metadata
     {"tenant": "<client_id>"} so the agent (which reads room metadata) attributes
     the call to the right client — the exact mechanism a SIP dispatch rule will
-    use for real phone numbers later."""
+    use for real phone numbers later.
+
+    Who may ask: an admin (any client, or a language-only test call), the client
+    itself (its own id), or anyone holding the client's call key — the call
+    page and widget. Nothing else, so nobody can burn a client's minutes by
+    guessing its slug."""
     from livekit import api
     room = req.room or f"call_{uuid.uuid4().hex[:8]}"
     identity = f"user_{uuid.uuid4().hex[:8]}"
 
+    role = (user or {}).get("role")
     metadata = {}
-    if req.client_id and tenants.get_tenant(req.client_id):
-        metadata["tenant"] = req.client_id
+    if req.client_id:
+        t = tenants.get_tenant(req.client_id)
+        if not t or t.id == "default" or not t.active:
+            raise HTTPException(status_code=401, detail="Unknown or paused client")
+        allowed = (
+            role == "admin"
+            or (role == "client" and user.get("client_id") == t.id)
+            or (req.call_key and hmac.compare_digest(req.call_key, t.call_key or ""))
+        )
+        if not allowed:
+            raise HTTPException(status_code=401, detail="Not allowed to call this client")
+        metadata["tenant"] = t.id
     elif req.language in languages.LANGUAGES:
+        if role != "admin":
+            raise HTTPException(status_code=401, detail="Sign in as admin to run a test call")
         metadata["language"] = req.language
+    else:
+        raise HTTPException(status_code=401, detail="client_id with call_key, or an admin session, required")
 
     # Pre-create the room carrying the metadata the agent will read.
     if metadata:
@@ -290,15 +321,22 @@ async def livekit_token(req: LiveKitTokenRequest):
 # ─── Routes: auth ─────────────────────────────────────────────────────────────
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
+def login(req: LoginRequest, request: Request):
+    keys = (f"u:{(req.username or '').strip().lower()}", f"ip:{_client_ip(request)}")
+    if any(auth.login_blocked(k) for k in keys):
+        raise HTTPException(status_code=429, detail="Too many failed sign-ins. Try again in 15 minutes.")
     user = auth.authenticate(req.username, req.password)
     if not user:
+        for k in keys:
+            auth.record_login_failure(k)
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    for k in keys:
+        auth.clear_login_failures(k)
     resp = JSONResponse(
         {"role": user["role"], "client_id": user["client_id"], "name": user["name"]}
     )
     subject = user["client_id"] if user["role"] == "client" else "admin"
-    auth.set_session_cookie(resp, user["role"], subject)
+    auth.set_session_cookie(resp, user["role"], subject, sv=user.get("session_version", 0))
     return resp
 
 

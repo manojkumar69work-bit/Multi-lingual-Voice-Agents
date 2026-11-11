@@ -66,6 +66,11 @@ def init_db():
             created_at REAL, updated_at REAL
         );
         CREATE INDEX IF NOT EXISTS idx_tenants_phone ON tenants(phone_number);
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            key TEXT NOT NULL,
+            ts  REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_login_attempts ON login_attempts(key, ts);
     """)
     # Idempotent migration for databases created before these columns existed.
     existing = {r[1] for r in conn.execute("PRAGMA table_info(calls)").fetchall()}

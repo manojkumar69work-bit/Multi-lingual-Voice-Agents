@@ -226,6 +226,8 @@ TURN_DETECTION_ENABLED = os.environ.get("TURN_DETECTION", "1") not in ("0", "fal
 TURN_DETECTION_LANGS = {"hi", "en"}
 
 LEAD_EXTRACT_MODEL = CHAT_MODEL
+# After the first lead delivery, re-extract every N assistant turns.
+LEAD_REEXTRACT_TURNS = int(os.environ.get("LEAD_REEXTRACT_TURNS", "4"))
 
 # Google Sheets (optional)
 SHEETS_CREDENTIALS = os.environ.get("GOOGLE_SHEETS_CREDENTIALS", "")
@@ -982,6 +984,35 @@ async def _ffmpeg_to_pcm(audio_bytes: bytes) -> bytes | None:
 
 # ─── Lead extraction ─────────────────────────────────────────────────────────
 
+def lead_has_content(lead: dict) -> bool:
+    """True when any field other than `notes` holds a value — the bar for
+    counting a call as a lead (an all-blank extraction is not one)."""
+    return any((v or "").strip() for k, v in (lead or {}).items() if k != "notes")
+
+
+def merge_lead(old: dict, new: dict) -> tuple[dict, bool]:
+    """Fold a fresh extraction into what the call already knows.
+
+    A non-empty new value wins; an empty one never erases an earlier answer,
+    since later extractions see only the tail of the transcript. `changed` is
+    True only when a field other than `notes` gained or changed a non-empty
+    value, which is what justifies delivering the lead again."""
+    merged = dict(old or {})
+    changed = False
+    for k, v in (new or {}).items():
+        v = (v or "").strip()
+        if not v:
+            merged.setdefault(k, "")
+            continue
+        if (merged.get(k) or "").strip() != v:
+            merged[k] = v
+            if k != "notes":
+                changed = True
+        else:
+            merged[k] = v
+    return merged, changed
+
+
 def _parse_lead_fields(lead_fields_str: str) -> list[str]:
     """Normalize a comma-separated lead_fields string into a clean list."""
     if not lead_fields_str:
@@ -1273,6 +1304,13 @@ async def entrypoint(ctx: JobContext):
 
     transcript: list[dict] = []
     lead_submitted = False
+    # What the call knows so far. Every extraction is merged into it, so a
+    # budget given after the name no longer disappears (ROADMAP B1).
+    lead_data: dict = {}
+    # Assistant turns since the last extraction; after the first submit the
+    # lead is re-extracted every LEAD_REEXTRACT_TURNS and re-delivered only
+    # when a field other than notes changed.
+    turns_since_extract = 0
     # `lead_submitted` alone cannot guard the extract→submit sequence: it is only
     # set after two awaits (the Groq extraction, then the enqueue), so a second
     # assistant turn landing inside that window spawned a second task and the
@@ -1292,7 +1330,7 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("conversation_item_added")
     def on_conversation_item(ev):
-        nonlocal lead_submitted, lead_extracting
+        nonlocal lead_submitted, lead_extracting, turns_since_extract
         msg = getattr(ev, "item", ev)
         if not hasattr(msg, "role"):
             return
@@ -1327,26 +1365,44 @@ async def entrypoint(ctx: JobContext):
         except Exception as e:
             logger.warning(f"publish transcript failed: {e}")
 
-        if (role == "assistant" and not chat_mode and not lead_submitted
+        if role == "assistant":
+            turns_since_extract += 1
+        due = (not lead_submitted) or turns_since_extract >= LEAD_REEXTRACT_TURNS
+        if (role == "assistant" and not chat_mode and due
                 and not lead_extracting and len(transcript) >= 4):
             lead_extracting = True
             # Snapshot the transcript: it keeps growing while the extraction runs.
             asyncio.create_task(_auto_extract_and_submit(list(transcript)))
 
+    async def _absorb_extraction(conv: list[dict]) -> None:
+        """Extract, merge into lead_data, store, and deliver when warranted.
+
+        Caller holds lead_lock. First delivery needs a name; later deliveries
+        happen only when a field other than notes changed."""
+        nonlocal lead_submitted, lead_data, turns_since_extract
+        turns_since_extract = 0
+        fresh = await extract_lead(conv, tenant)
+        if not fresh:
+            return
+        merged, changed = merge_lead(lead_data, fresh)
+        lead_data = merged
+        call_store.upsert_call(session_id, lead_data=merged, lead_extracted=lead_has_content(merged))
+        if not lead_submitted:
+            if not merged.get("name"):
+                return
+            await submit_lead(merged, tenant, session_id)
+            lead_submitted = True
+            call_store.upsert_call(session_id, lead_submitted=True)
+            logger.info(f"Lead auto-submitted for {ctx.room.name}")
+        elif changed:
+            await submit_lead(merged, tenant, session_id)
+            logger.info(f"Lead re-delivered with new details for {ctx.room.name}")
+
     async def _auto_extract_and_submit(conv: list[dict]):
-        nonlocal lead_submitted, lead_extracting
+        nonlocal lead_extracting
         try:
             async with lead_lock:
-                if lead_submitted:
-                    return
-                lead_data = await extract_lead(conv, tenant)
-                if not (lead_data and lead_data.get("name")):
-                    return
-                call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
-                await submit_lead(lead_data, tenant, session_id)
-                lead_submitted = True
-                call_store.upsert_call(session_id, lead_submitted=True)
-                logger.info(f"Lead auto-submitted for {ctx.room.name}")
+                await _absorb_extraction(conv)
         finally:
             # Cleared only once the attempt is fully done, so the next assistant
             # turn can retry when this extraction found no name yet.
@@ -1376,10 +1432,11 @@ async def entrypoint(ctx: JobContext):
         # Take the same lock: an auto-extraction may still be in flight from the
         # last assistant turn, and both paths end in submit_lead().
         async with lead_lock:
-            if not lead_submitted and not chat_mode:
-                lead_data = await extract_lead(transcript, tenant)
-                if lead_data:
-                    call_store.upsert_call(session_id, lead_data=lead_data, lead_extracted=True)
+            if not chat_mode and len(transcript) >= 2:
+                await _absorb_extraction(list(transcript))
+                # Last chance: a lead with real content but no name still goes
+                # to the client rather than dying with the call.
+                if not lead_submitted and lead_has_content(lead_data):
                     await submit_lead(lead_data, tenant, session_id)
                     lead_submitted = True
                     call_store.upsert_call(session_id, lead_submitted=True)

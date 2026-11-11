@@ -77,14 +77,33 @@ async def lifespan(app: FastAPI):
     auth.check_config()  # raises in production if secrets are still dev defaults
     stop = asyncio.Event()
     worker = asyncio.create_task(lead_delivery.run_worker(stop))
+    reaper = asyncio.create_task(_reap_stalled_calls(stop))
     try:
         yield
     finally:
         stop.set()
-        worker.cancel()
+        for task in (worker, reaper):
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+STALLED_AFTER_SECONDS = int(os.environ.get("STALLED_AFTER_SECONDS", str(2 * 3600)))
+STALLED_CHECK_SECONDS = int(os.environ.get("STALLED_CHECK_SECONDS", "600"))
+
+
+async def _reap_stalled_calls(stop: asyncio.Event) -> None:
+    """Every 10 minutes, mark calls 'active' for over 2 hours as stalled."""
+    while not stop.is_set():
         try:
-            await worker
-        except (asyncio.CancelledError, Exception):
+            await asyncio.to_thread(call_store.mark_stalled, STALLED_AFTER_SECONDS)
+        except Exception as e:
+            logger.warning("stalled-call reaper failed: %s", e)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=STALLED_CHECK_SECONDS)
+        except asyncio.TimeoutError:
             pass
 
 

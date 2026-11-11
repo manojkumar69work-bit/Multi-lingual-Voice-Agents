@@ -166,6 +166,21 @@ def get_active_calls(client_id: str | None = None) -> list[dict]:
     return list_calls(status="active", client_id=client_id)
 
 
+def mark_stalled(older_than_seconds: float) -> int:
+    """Calls still 'active' with no update for this long never ended cleanly
+    (worker crash, lost room). Mark them so live counts stop lying."""
+    conn = _get_conn()
+    cutoff = time.time() - older_than_seconds
+    cur = conn.execute(
+        "UPDATE calls SET status='stalled', updated_at=? WHERE status='active' AND updated_at < ?",
+        (time.time(), cutoff),
+    )
+    conn.commit()
+    if cur.rowcount:
+        logger.warning("Marked %d call(s) as stalled", cur.rowcount)
+    return cur.rowcount
+
+
 def _month_start_epoch() -> float:
     """Unix epoch (UTC) for the first instant of the current calendar month."""
     now = datetime.now(timezone.utc)

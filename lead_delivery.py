@@ -173,19 +173,47 @@ def enqueue_lead(lead: dict, tenant, session_id: str = "", lead_fields: list[str
 
 # ── Queue mechanics ─────────────────────────────────────────────────────────
 
+# A row stuck in 'sending' this long belongs to a worker that died mid-send;
+# it is reclaimed on the next pass.
+SENDING_STALE_SECONDS = 600
+
+
 def claim_due(limit: int = WORKER_BATCH) -> list[dict]:
-    """Return pending rows whose next_attempt_at has passed, oldest first."""
+    """Claim pending rows whose next_attempt_at has passed, oldest first.
+
+    The select and the status flip to 'sending' happen in one immediate
+    transaction, so two server processes never deliver the same lead."""
     conn = call_store.get_conn()
-    rows = conn.execute(
-        """
-        SELECT * FROM lead_deliveries
-        WHERE status = 'pending' AND next_attempt_at <= ?
-        ORDER BY next_attempt_at ASC
-        LIMIT ?
-        """,
-        (time.time(), limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    now = time.time()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM lead_deliveries
+            WHERE (status = 'pending' AND next_attempt_at <= ?)
+               OR (status = 'sending' AND updated_at < ?)
+            ORDER BY next_attempt_at ASC
+            LIMIT ?
+            """,
+            (now, now - SENDING_STALE_SECONDS, limit),
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+        if ids:
+            conn.execute(
+                f"UPDATE lead_deliveries SET status='sending', updated_at=? "
+                f"WHERE id IN ({','.join('?' * len(ids))})",
+                [now, *ids],
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["status"] = "sending"
+        out.append(d)
+    return out
 
 
 def _mark_delivered(row_id: int) -> None:
@@ -286,6 +314,16 @@ def _format_lead_message(data: dict) -> str:
     return "\n".join(lines)
 
 
+_FORMULA_LEADERS = ("=", "+", "-", "@")
+
+
+def escape_cell(value) -> str:
+    """Neutralise spreadsheet formula injection: a caller who says their name
+    is "=IMPORTXML(...)" must land in the sheet as text."""
+    s = "" if value is None else str(value)
+    return "'" + s if s[:1] in _FORMULA_LEADERS else s
+
+
 def _deliver_sheets_blocking(data: dict, sheet_id: str) -> None:
     import gspread
     from google.oauth2.service_account import Credentials
@@ -297,7 +335,7 @@ def _deliver_sheets_blocking(data: dict, sheet_id: str) -> None:
     ws = gc.open_by_key(sheet_id).sheet1
     lead = data.get("lead", {})
     fields = data.get("lead_fields") or list(lead.keys())
-    row = [lead.get(k, "") for k in fields] + [data.get("captured_at", "")]
+    row = [escape_cell(lead.get(k, "")) for k in fields] + [data.get("captured_at", "")]
     ws.append_row(row, value_input_option="USER_ENTERED")
 
 

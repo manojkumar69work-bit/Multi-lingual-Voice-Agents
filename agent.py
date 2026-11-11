@@ -1210,10 +1210,19 @@ async def entrypoint(ctx: JobContext):
 
     # Resolve tenant from room metadata (set by LiveKit SIP dispatch rule
     # for real phone calls, or by server.py for browser tests).
-    tenant = tenants.get_tenant_from_metadata(getattr(ctx.room, "metadata", None))
+    # A SIP caller carries its numbers as participant attributes; a browser
+    # caller carries nothing, and the room metadata names the client instead.
+    sip_attrs: dict = {}
+    for p in getattr(ctx.room, "remote_participants", {}).values():
+        attrs = dict(getattr(p, "attributes", {}) or {})
+        if attrs.get(tenants.SIP_CALLED_ATTR) or attrs.get(tenants.SIP_CALLER_ATTR):
+            sip_attrs = attrs
+            break
+    tenant, caller_phone = tenants.resolve_tenant(getattr(ctx.room, "metadata", None), sip_attrs)
     logger.info(
         f"Call from {ctx.room.name} → tenant={tenant.name!r} "
         f"lang={tenant.language} agent={tenant.agent_name}"
+        + (f" caller={caller_phone}" if caller_phone else "")
     )
 
     client_id = tenant.id  # "" for the default/browser-test tenant
@@ -1341,6 +1350,7 @@ async def entrypoint(ctx: JobContext):
         status="active",
         transcript=[],
         client_id=client_id,
+        caller_phone=caller_phone,
     )
 
     @session.on("conversation_item_added")

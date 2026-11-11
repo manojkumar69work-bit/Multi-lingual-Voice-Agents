@@ -137,3 +137,25 @@ Swap the Telnyx US trial number for a **+91 Indian DID** on **Plivo** or **Exote
 (needs KYC + DLT, ~₹300–600/mo) pointed at the same LiveKit SIP host. Everything else —
 agent, dispatch rule, portals — stays identical. Price the plan to cover it (see
 `SALES_PITCH.md`).
+
+
+---
+
+## Routing one number per client (no code changes)
+
+The dispatch rule in `sip-dispatch-rule.json` no longer pins a tenant. The agent
+reads the dialled number off the SIP participant (`sip.trunkPhoneNumber`) and
+matches it against each client's **Phone number** field in the admin console
+(Access & plan tab). A number that matches no active client is answered by the
+default agent. The caller's number (`sip.phoneNumber`) is stored on the call as
+`caller_phone`, so the portal can show it and offer a call-back.
+
+So, per client:
+
+1. Add their number to the inbound trunk (`sip-inbound-trunk.json` → `numbers`,
+   then `lk sip inbound update`), or create one trunk per carrier account.
+2. Put the same number in the client's **Phone number** field and save.
+
+That is the whole wiring. To pin a trunk to one client regardless of number,
+put `{"tenant": "<slug>"}` back into the dispatch rule's `metadata`; room
+metadata always wins over the dialled number.

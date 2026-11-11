@@ -371,7 +371,7 @@ def get_tenant_for_number(phone_number: str) -> TenantConfig:
         return _default()
     num = _normalize_number(phone_number)
     digits = "".join(c for c in num if c.isdigit())
-    rows = _conn().execute("SELECT * FROM tenants WHERE phone_number != ''").fetchall()
+    rows = _conn().execute("SELECT * FROM tenants WHERE phone_number != '' AND active = 1").fetchall()
     for row in rows:
         t = _row_to_cfg(row)
         t_digits = "".join(c for c in t.phone_number if c.isdigit())
@@ -379,6 +379,27 @@ def get_tenant_for_number(phone_number: str) -> TenantConfig:
             return t
     logger.info("No tenant for number %r — using default", phone_number)
     return _default()
+
+
+# LiveKit SIP sets these attributes on the caller's participant.
+SIP_CALLED_ATTR = "sip.trunkPhoneNumber"   # the number that was dialled (ours)
+SIP_CALLER_ATTR = "sip.phoneNumber"        # the caller's number
+
+
+def resolve_tenant(metadata, attributes: dict | None = None) -> tuple[TenantConfig, str]:
+    """Which client a call belongs to, and who is calling.
+
+    Order: a tenant named in the room metadata (browser calls, or a dispatch
+    rule that pins one client) wins; otherwise the dialled number on the SIP
+    participant picks the client; otherwise the default agent answers. The
+    caller's number is returned for the call record ("" for browser calls)."""
+    attrs = attributes or {}
+    caller = (attrs.get(SIP_CALLER_ATTR) or "").strip()
+    called = (attrs.get(SIP_CALLED_ATTR) or "").strip()
+    tenant = get_tenant_from_metadata(metadata)
+    if tenant.id == "default" and called:
+        tenant = get_tenant_for_number(called)
+    return tenant, caller
 
 
 def get_tenant_from_metadata(metadata) -> TenantConfig:

@@ -315,7 +315,7 @@ const P = (() => {
     if (saved) root.dataset.theme = saved;
     const btn = document.getElementById('themeBtn');
     if (!btn) return;
-    const isDark = () => root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    const isDark = () => root.dataset.theme !== 'light';   // lights out unless the person chose light
     const paint = () => { btn.innerHTML = icon(isDark() ? 'sun' : 'moon'); btn.setAttribute('aria-label', isDark() ? 'Use light theme' : 'Use dark theme'); };
     btn.addEventListener('click', () => {
       root.dataset.theme = isDark() ? 'light' : 'dark';

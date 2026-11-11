@@ -1,96 +1,74 @@
 /* ============================================================================
-   MEA Voice Agent — portal design system  ("Call ledger")
-   Cool paper + deep ink, two voices: caller = teal, agent = marigold.
-   Those two colours mean the same thing everywhere — the turn strip, the
-   transcript, the live caller — so a reader learns them once.
-   Used by login, admin, client, dashboard and the test caller.
+   MEA Voice Agent — portal design system
+   X "Lights out" palette: true black paper, hairline #2F3336 borders, white
+   pill buttons, Chirp-style system type. Dark is the default; the toggle
+   gives X's light theme. Two voices stay colour-coded everywhere: caller =
+   X blue, agent = X orange — the turn strip, the transcript, the live caller.
+   Used by login, admin, client, the call page and the test caller.
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Martian+Mono:wght@400;500&family=Noto+Sans+Telugu:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;500&family=Noto+Sans+Telugu:wght@400;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap');
 
 :root {
-  color-scheme: light;
-  --paper:   #f3f5f2;
-  --surface: #fcfcfb;
-  --sunk:    #eceFEb;
-  --ink:     #13201c;
-  --ink-2:   #3d4a46;
-  --muted:   #5f6c68;
-  --line:    #dbe0dc;
-  --line-2:  #c5ccc7;
+  color-scheme: dark;
+  --paper:   #000000;
+  --surface: #000000;
+  --sunk:    #16181c;
+  --ink:     #e7e9ea;
+  --ink-2:   #c9cdd0;
+  --muted:   #71767b;
+  --line:    #2f3336;
+  --line-2:  #3e4144;
 
-  /* the two voices — validated as a categorical pair (CVD ΔE 9.4) */
-  --caller:  #0b8a6f;
-  --agent:   #c8701a;
-  --caller-wash: rgba(11,138,111,.10);
-  --agent-wash:  rgba(200,112,26,.12);
+  /* the two voices */
+  --caller:  #1d9bf0;
+  --agent:   #ff7a00;
+  --caller-wash: rgba(29,155,240,.14);
+  --agent-wash:  rgba(255,122,0,.14);
 
-  --primary: #13201c;          /* buttons are ink, not a brand hue */
-  --on-primary: #fcfcfb;
-  --focus:   #0b8a6f;
+  --primary: #eff3f4;          /* X's white pill button */
+  --on-primary: #0f1419;
+  --focus:   #1d9bf0;
 
   /* status — reserved, always paired with a label */
-  --ok:     #1f7a45;
-  --warn:   #9a6400;
-  --bad:    #b3341f;
-  --ok-bg:   #e3f1e8;
-  --warn-bg: #f7ecd6;
-  --bad-bg:  #f8e2dd;
+  --ok:     #00ba7c;
+  --warn:   #ffd400;
+  --bad:    #f4212e;
+  --ok-bg:   rgba(0,186,124,.12);
+  --warn-bg: rgba(255,212,0,.12);
+  --bad-bg:  rgba(244,33,46,.13);
 
-  --r: 8px;
-  --r-lg: 14px;
+  --r: 12px;
+  --r-lg: 16px;
   --rail: 236px;
 
-  --f-display: 'Familjen Grotesk', 'Atkinson Hyperlegible', system-ui, sans-serif;
-  --f-body: 'Atkinson Hyperlegible', 'Noto Sans Devanagari', 'Noto Sans Telugu', system-ui, sans-serif;
+  --f-display: "TwitterChirp", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --f-body: "TwitterChirp", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, 'Noto Sans Devanagari', 'Noto Sans Telugu', sans-serif;
   --f-mono: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  --shadow: 0 1px 2px rgba(19,32,28,.05), 0 8px 24px -12px rgba(19,32,28,.18);
+  --shadow: 0 0 15px rgba(255,255,255,.08), 0 0 3px 1px rgba(255,255,255,.08);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --paper:   #0e1412;
-    --surface: #1a1a19;
-    --sunk:    #131917;
-    --ink:     #e4ebe8;
-    --ink-2:   #bcc7c3;
-    --muted:   #8d9a96;
-    --line:    #29322f;
-    --line-2:  #3a4541;
-    --caller:  #2fa88b;
-    --agent:   #c97a22;
-    --caller-wash: rgba(47,168,139,.14);
-    --agent-wash:  rgba(201,122,34,.16);
-    --primary: #e4ebe8;
-    --on-primary: #0e1412;
-    --focus:   #2fa88b;
-    --ok: #5cc28a; --warn: #e0a93a; --bad: #ef7a64;
-    --ok-bg: rgba(92,194,138,.12); --warn-bg: rgba(224,169,58,.12); --bad-bg: rgba(239,122,100,.13);
-    --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 12px 30px -14px rgba(0,0,0,.7);
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --paper:   #0e1412;
-  --surface: #1a1a19;
-  --sunk:    #131917;
-  --ink:     #e4ebe8;
-  --ink-2:   #bcc7c3;
-  --muted:   #8d9a96;
-  --line:    #29322f;
-  --line-2:  #3a4541;
-  --caller:  #2fa88b;
-  --agent:   #c97a22;
-  --caller-wash: rgba(47,168,139,.14);
-  --agent-wash:  rgba(201,122,34,.16);
-  --primary: #e4ebe8;
-  --on-primary: #0e1412;
-  --focus:   #2fa88b;
-  --ok: #5cc28a; --warn: #e0a93a; --bad: #ef7a64;
-  --ok-bg: rgba(92,194,138,.12); --warn-bg: rgba(224,169,58,.12); --bad-bg: rgba(239,122,100,.13);
-  --shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 12px 30px -14px rgba(0,0,0,.7);
+:root[data-theme="light"] {
+  color-scheme: light;
+  --paper:   #ffffff;
+  --surface: #ffffff;
+  --sunk:    #f7f9f9;
+  --ink:     #0f1419;
+  --ink-2:   #3a4852;
+  --muted:   #536471;
+  --line:    #eff3f4;
+  --line-2:  #cfd9de;
+  --caller:  #1d9bf0;
+  --agent:   #e06d00;
+  --caller-wash: rgba(29,155,240,.10);
+  --agent-wash:  rgba(224,109,0,.12);
+  --primary: #0f1419;
+  --on-primary: #ffffff;
+  --focus:   #1d9bf0;
+  --ok: #00a26c; --warn: #9a7200; --bad: #f4212e;
+  --ok-bg: rgba(0,186,124,.12); --warn-bg: rgba(255,212,0,.16); --bad-bg: rgba(244,33,46,.10);
+  --shadow: 0 0 15px rgba(101,119,134,.2), 0 0 3px 1px rgba(101,119,134,.15);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -138,7 +116,7 @@ a { color: inherit; }
   text-align: left; cursor: pointer; color: var(--ink-2); text-decoration: none; font-size: 14.5px;
 }
 .nav button:hover, .nav a:hover { background: var(--sunk); color: var(--ink); }
-.nav button[aria-current="page"] { background: var(--sunk); color: var(--ink); font-weight: 700; box-shadow: inset 3px 0 0 var(--caller); }
+.nav button[aria-current="page"] { background: var(--sunk); color: var(--ink); font-weight: 700; }
 .nav svg { width: 17px; height: 17px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; }
 .nav .n { margin-left: auto; font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
 .nav .n.live { color: var(--ok); }
@@ -173,7 +151,7 @@ h2.sec .count { font-family: var(--f-mono); font-size: 12px; color: var(--muted)
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 8px 14px; border-radius: var(--r); border: 1px solid var(--primary);
+  padding: 8px 16px; border-radius: 9999px; border: 1px solid var(--primary);
   background: var(--primary); color: var(--on-primary);
   font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; text-decoration: none;
   transition: transform .08s, background .15s, border-color .15s;

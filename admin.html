@@ -231,6 +231,17 @@
       </div>
       <div class="check"><input type="checkbox" id="f_enforce" /><label for="f_enforce">Decline calls once the monthly minutes run out</label></div>
       <div class="check"><input type="checkbox" id="f_active" checked /><label for="f_active">Agent is answering calls for this client</label></div>
+      <div id="shareBlock" hidden>
+        <div class="label">Call link for the client's website</div>
+        <div class="grid2" style="align-items:end">
+          <div><label for="f_calllink">Public call page</label><input id="f_calllink" readonly /></div>
+          <div class="actions"><button class="btn ghost sm" type="button" onclick="copyField('f_calllink','Link copied')">Copy link</button><button class="btn ghost sm" type="button" onclick="rotateKey()">Rotate key</button></div>
+        </div>
+        <label for="f_embed">Embed snippet <span class="opt">(adds a floating “Call us” button)</span></label>
+        <textarea id="f_embed" class="code" rows="2" readonly></textarea>
+        <div class="actions"><button class="btn ghost sm" type="button" onclick="copyField('f_embed','Snippet copied')">Copy snippet</button></div>
+        <div class="hint">Anyone with the link can call this client's agent. Rotating the key makes every old link and snippet stop working.</div>
+      </div>
     </div>
   </div>
   <div class="drawer-foot">
@@ -450,6 +461,8 @@ function openClient(id = null, startTab = 'agent') {
   $('delBtn').hidden = !editing;
   $('dTest').hidden = !editing;
   if (editing) $('dTest').href = '/?client=' + encodeURIComponent(c.id);
+  $('shareBlock').hidden = !editing;
+  if (editing) renderShare(c.id);
   $('dTabs').querySelector('[data-tab="calls"]').hidden = !editing;
   $('dErr').textContent = '';
   $('saveBtn').textContent = editing ? 'Save changes' : 'Add client';
@@ -495,6 +508,21 @@ async function saveClient() {
     closeClient(); load();
   } catch (e) { $('dErr').textContent = e.message; }
   finally { $('saveBtn').disabled = false; }
+}
+function renderShare(id) {
+  const link = location.origin + '/call/' + encodeURIComponent(id);
+  $('f_calllink').value = link;
+  $('f_embed').value = `<script src="${location.origin}/static/widget.js" data-client="${id}"><\/script>`;
+}
+async function copyField(id, msg) {
+  try { await navigator.clipboard.writeText($(id).value); P.toast(msg); }
+  catch (_) { $(id).select(); document.execCommand('copy'); P.toast(msg); }
+}
+async function rotateKey() {
+  if (!editing) return;
+  if (!confirm('Rotate the call key? Every existing link and embed for this client stops working until it is replaced.')) return;
+  try { await P.api('/api/admin/clients/' + encodeURIComponent(editing.id) + '/rotate-key', { method: 'POST' }); P.toast('Key rotated'); }
+  catch (e) { $('dErr').textContent = e.message; }
 }
 async function deleteClient() {
   if (!editing) return;

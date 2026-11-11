@@ -185,6 +185,36 @@ def admin_page():
 def client_page():
     return _page("client.html")
 
+
+def _public_tenant(slug: str):
+    """The tenant behind a public call page, or 404 when unknown or paused."""
+    t = tenants.get_tenant(slug)
+    if not t or t.id == "default" or not t.active:
+        raise HTTPException(status_code=404, detail="No agent is answering at this address")
+    return t
+
+
+@app.get("/call/{slug}")
+def call_page(slug: str):
+    """Public call page for one client: what they link to or embed on their site."""
+    _public_tenant(slug)
+    return _page("call.html")
+
+
+@app.get("/api/call/{slug}/config")
+def call_config(slug: str):
+    """What the public call page needs. The call_key is public by design: it only
+    lets a browser start a call with this client's agent, which the page exists
+    to do; rotating it from the admin invalidates every old embed at once."""
+    t = _public_tenant(slug)
+    return {
+        "client_id": t.id,
+        "name": t.name or t.id,
+        "agent_name": t.agent_name or "Riya",
+        "language": t.language,
+        "call_key": t.call_key,
+    }
+
 @app.get("/dashboard")
 def dashboard_page():
     return _page("dashboard.html")
@@ -431,6 +461,15 @@ def admin_update_client(client_id: str, body: ClientUpsert, _admin=Depends(auth.
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"client": cfg.safe_dict()}
+
+
+@app.post("/api/admin/clients/{client_id}/rotate-key")
+def admin_rotate_key(client_id: str, _admin=Depends(auth.require_admin)):
+    try:
+        key = tenants.rotate_call_key(client_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return {"call_key": key}
 
 
 @app.delete("/api/admin/clients/{client_id}")

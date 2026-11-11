@@ -13,7 +13,8 @@ import re
 
 # ── Load the pure helpers out of agent.py ────────────────────────────────────
 _src = open("agent.py").read()
-_ns = {"re": re}
+import languages
+_ns = {"re": re, "languages": languages}
 _tree = ast.parse(_src)
 
 # Module-level constants the functions below close over (prompt fragments and
@@ -21,6 +22,7 @@ _tree = ast.parse(_src)
 _CONSTS = {
     "_INDIC_RUN", "_LEAD_FIELDS_HINT_TEMPLATE", "_CLOSING_HINT_TEMPLATE",
     "_STYLE_HINT", "_SCOPE_GUARD", "_CHAT_VOICE_RULES", "_CHAT_STT_BIAS",
+    "_SCHWA_DROP_LANGS",
 }
 for _n in _tree.body:
     if isinstance(_n, ast.Assign) and any(
@@ -37,10 +39,17 @@ for _n in _tree.body:
 
 # romanize() needs the transliteration machinery agent.py imports at module level.
 try:
-    from indic_transliteration.sanscript import transliterate, DEVANAGARI, TELUGU, ITRANS
+    from indic_transliteration.sanscript import (
+        transliterate, ITRANS, BENGALI, DEVANAGARI, GUJARATI, GURMUKHI, KANNADA,
+        MALAYALAM, ORIYA, TAMIL, TELUGU,
+    )
     _ns.update(
         transliterate=transliterate, DEVANAGARI=DEVANAGARI, TELUGU=TELUGU,
         ITRANS=ITRANS, _HAS_TRANSLITERATE=True,
+        _SANSCRIPT_BY_LANG={
+            "hi": DEVANAGARI, "mr": DEVANAGARI, "te": TELUGU, "ta": TAMIL, "kn": KANNADA,
+            "ml": MALAYALAM, "bn": BENGALI, "gu": GUJARATI, "pa": GURMUKHI, "od": ORIYA,
+        },
     )
 except ImportError:  # pragma: no cover
     raise SystemExit("skip: indic-transliteration not installed")

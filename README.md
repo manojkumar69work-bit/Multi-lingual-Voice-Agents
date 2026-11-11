@@ -1,6 +1,6 @@
 # Multi-lingual Voice Agent
 
-**A real-time AI agent that answers the phone, holds a conversation in Telugu or mixed Hindi/English, and hands you a structured lead when the call ends.**
+**A real-time AI agent that answers the phone, holds a conversation in Hinglish, Telugu, Tamil, Kannada, Malayalam, Marathi, Bengali, Gujarati, Punjabi, Odia or English, and hands you a structured lead when the call ends.**
 
 Multi-tenant from the ground up: each client organisation gets its own prompt, language, agent persona, minute quota, and login, and can never see another's calls or recordings. Retargeting it to a new domain — support, surveys, sales, lead capture — means swapping the prompt and the extraction schema, not writing code.
 

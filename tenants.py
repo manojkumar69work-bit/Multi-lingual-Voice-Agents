@@ -25,6 +25,7 @@ import threading
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
+import languages
 import passwords
 
 logger = logging.getLogger("tenants")
@@ -34,11 +35,10 @@ _WRITE_LOCK = threading.Lock()
 
 
 # ── Per-tenant (per-client) config ──────────────────────────────────────────
-# `language` is one of:
-#   "hi"  — Hinglish (Roman-script Hindi)  ← default
-#   "te"  — Telugu
-#   "en"  — English
-# The TTS service picks a native voice for each language automatically.
+# `language` is any code in languages.py — "hi" (Hinglish, Roman-script Hindi,
+# the default), "te", "en", "ta", "kn", "ml", "mr", "bn", "gu", "pa", "od".
+# Unknown values fall back to the default. The TTS service picks a native voice
+# for each language automatically.
 #
 # `mode` is one of:
 #   "business" — the lead-capturing assistant for a client's business  ← default
@@ -51,7 +51,7 @@ MODES = ("business", "chat")
 class TenantConfig:
     id: str = "default"                 # stable slug — primary key & login username
     name: str = ""                      # Agency name (display)
-    language: str = "hi"                # "hi" | "te" | "en"
+    language: str = "hi"                # a languages.py code; see above
     mode: str = "business"              # "business" | "chat"
     agent_name: str = "Riya"            # Name the AI agent uses on the call
     system_prompt: str = ""             # Custom LLM prompt; blank → built-in template
@@ -127,7 +127,7 @@ def _tenant_from_dict(d: dict, *, fallback_id: str = "") -> TenantConfig:
     return TenantConfig(
         id=tid,
         name=d.get("name", ""),
-        language=d.get("language", "hi"),
+        language=languages.normalize(d.get("language")),
         # Unknown values fall back to the business assistant rather than a
         # tenant that silently gets no scope guard.
         mode=(d.get("mode") or "business") if (d.get("mode") or "business") in MODES else "business",

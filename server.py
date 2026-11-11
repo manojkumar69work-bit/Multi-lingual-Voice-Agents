@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 import auth
 import call_store
+import languages
 import lead_delivery
 import tenants
 
@@ -255,7 +256,7 @@ async def livekit_token(req: LiveKitTokenRequest):
     metadata = {}
     if req.client_id and tenants.get_tenant(req.client_id):
         metadata["tenant"] = req.client_id
-    elif req.language in ("hi", "te", "en"):
+    elif req.language in languages.LANGUAGES:
         metadata["language"] = req.language
 
     # Pre-create the room carrying the metadata the agent will read.
@@ -329,6 +330,12 @@ def _client_with_stats(t: dict, stats_map: dict) -> dict:
         "total_minutes": s.get("total_minutes", 0.0),
         "month_minutes": s.get("month_minutes", 0.0),
     }
+
+
+@app.get("/api/languages")
+async def api_languages():
+    """Languages a tenant can be set to; feeds the admin and test-caller pickers."""
+    return languages.public_list()
 
 
 @app.get("/api/admin/clients")

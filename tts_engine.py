@@ -41,6 +41,8 @@ except ImportError:  # pragma: no cover
     inw = None  # type: ignore[assignment]
 
 
+import languages
+
 logger = logging.getLogger("tts")
 
 
@@ -69,28 +71,14 @@ class VoiceProfile:
 # Which speaker sounds best is finally a listening call, not a spec — audition
 # all 37 in static/sarvam_demo.html, which renders each one in hi and te.
 DEFAULT_VOICES: dict[str, VoiceProfile] = {
-    "hi": VoiceProfile(
-        language="hi",
-        sarvam_speaker=os.environ.get("TTS_VOICE_HI", "priya"),
-        sarvam_lang="hi-IN",
-        edge_voice="hi-IN-SwaraNeural",
+    L.code: VoiceProfile(
+        language=L.code,
+        sarvam_speaker=L.speaker,       # honours TTS_VOICE_<CODE>
+        sarvam_lang=L.sarvam_code,
+        edge_voice=L.edge_voice,
         quality_tier=1,
-    ),
-    "te": VoiceProfile(
-        language="te",
-        sarvam_speaker=os.environ.get("TTS_VOICE_TE", "neha"),
-        sarvam_lang="te-IN",
-        edge_voice="te-IN-ShrutiNeural",
-        quality_tier=1,
-    ),
-    "en": VoiceProfile(
-        language="en",
-        # ishita: Tier 1, 0.13% CER for en-IN.
-        sarvam_speaker=os.environ.get("TTS_VOICE_EN", "ishita"),
-        sarvam_lang="en-IN",
-        edge_voice="en-IN-NeerjaNeural",
-        quality_tier=1,
-    ),
+    )
+    for L in languages.LANGUAGES.values()
 }
 
 # Bulbul v3 sampling temperature (0.01–2.0, model default 0.6) — governs how
@@ -278,13 +266,18 @@ def _hard_split(text: str, max_chars: int) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def detect_lang(text: str) -> str:
-    devanagari = sum(1 for c in text if "\u0900" <= c <= "\u097F")
-    telugu = sum(1 for c in text if "\u0C00" <= c <= "\u0C7F")
-    if telugu > devanagari and telugu > 0:
-        return "te"
-    if devanagari > 0:
-        return "hi"
-    return "en"
+    """Language whose native script dominates `text`; Latin-only text is "en".
+
+    Devanagari reports as "hi" (Marathi shares the script), so a Marathi tenant
+    must pass its language explicitly rather than rely on detection."""
+    counts: dict[str, int] = {}
+    for c in text:
+        code = languages.script_of(c)
+        if code:
+            counts[code] = counts.get(code, 0) + 1
+    if not counts:
+        return "en"
+    return max(counts, key=counts.get)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -50,16 +50,36 @@ from livekit.plugins import openai, sarvam, silero, smallestai
 logger = logging.getLogger("voice-agent")
 logging.basicConfig(level=logging.INFO)
 
+import languages
+
 try:
-    from indic_transliteration.sanscript import transliterate, DEVANAGARI, TELUGU, ITRANS
+    from indic_transliteration.sanscript import (
+        transliterate, ITRANS, BENGALI, DEVANAGARI, GUJARATI, GURMUKHI, KANNADA,
+        MALAYALAM, ORIYA, TAMIL, TELUGU,
+    )
     _HAS_TRANSLITERATE = True
+    # sanscript scheme per language code (languages.py). Hindi and Marathi share
+    # Devanagari, so a Devanagari run always reports as "hi" — same scheme.
+    _SANSCRIPT_BY_LANG = {
+        "hi": DEVANAGARI, "mr": DEVANAGARI, "te": TELUGU, "ta": TAMIL, "kn": KANNADA,
+        "ml": MALAYALAM, "bn": BENGALI, "gu": GUJARATI, "pa": GURMUKHI, "od": ORIYA,
+    }
 except ImportError:
     _HAS_TRANSLITERATE = False
+    _SANSCRIPT_BY_LANG = {}
+
+# Languages whose spoken form drops the inherent final vowel ("ghar", not
+# "ghara"). Dravidian languages and Odia keep it.
+_SCHWA_DROP_LANGS = {"hi", "mr", "bn", "gu", "pa"}
 
 
 # One run of Indic script (plus the zero-width joiners that bind conjuncts).
 # Everything outside a match is left exactly as written — see romanize().
-_INDIC_RUN = re.compile("[ऀ-ॿఀ-౿‌‍]+")
+_INDIC_RUN = re.compile(
+    "[" + "".join(f"{lo}-{hi}" for lo, hi in sorted({
+        L.script for L in languages.LANGUAGES.values() if L.script
+    })) + "\u200c\u200d]+"
+)
 
 
 def _tidy_itrans(out: str, *, drop_final_schwa: bool) -> str:
@@ -124,10 +144,10 @@ def romanize(text: str) -> str:
         run = m.group(0).replace("‌", "").replace("‍", "")
         if not run:
             return ""
-        is_telugu = any("ఀ" <= c <= "౿" for c in run)
-        script = TELUGU if is_telugu else DEVANAGARI
+        code = next((languages.script_of(c) for c in run if languages.script_of(c)), "hi")
+        script = _SANSCRIPT_BY_LANG.get(code, DEVANAGARI)
         return _tidy_itrans(
-            transliterate(run, script, ITRANS), drop_final_schwa=not is_telugu
+            transliterate(run, script, ITRANS), drop_final_schwa=code in _SCHWA_DROP_LANGS
         )
 
     try:
@@ -165,7 +185,9 @@ SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
 SARVAM_BASE = "https://api.sarvam.ai/v1"
 SARVAM_STT_MODEL = os.environ.get("SARVAM_STT_MODEL", "saaras:v3")
 SARVAM_LLM_MODEL = os.environ.get("SARVAM_LLM_MODEL", "sarvam-105b-conversations")
-SARVAM_LANGS = {"hi", "te"}
+# Every language in languages.py: Saaras v3 codemix STT and the Sarvam LLM go
+# first for all of them, with Groq Whisper / gpt-oss behind as the fallback.
+SARVAM_LANGS = set(languages.codes())
 
 # Smallest.ai Lightning: the second TTS provider, between Sarvam and Edge, so a
 # Sarvam outage still sounds like a natural Indian voice. Skipped without a key.
@@ -292,7 +314,8 @@ def build_system_prompt(tenant) -> str:
     If the tenant has a custom system_prompt, it is used as-is (the built-in
     template is only a fallback when system_prompt is blank).
 
-    `tenant.language` is one of: "hi" (Hinglish, default), "te" (Telugu), "en" (English).
+    `tenant.language` is any code in languages.py: "hi" (Hinglish, default), "te",
+    "en" and the other Sarvam languages, which share one generic Indic template.
     """
     lang = tenant.language
     agent_name = tenant.agent_name or "Riya"
@@ -375,6 +398,32 @@ def build_system_prompt(tenant) -> str:
             f"{_STYLE_HINT}\n"
             f"- Use polite fillers like 'sure', 'absolutely', 'thanks for that'.\n\n"
             f"Over the chat, {lead_hint}\n\n"
+            f"{closing_hint}"
+        )
+    if lang in languages.LANGUAGES and lang not in ("hi", "te", "en"):
+        # Every other Sarvam language: native script, English loanwords left in
+        # Latin, spoken register — the same conventions as the Telugu prompt,
+        # without a per-language worked example.
+        L = languages.get(lang)
+        return (
+            f"You are {agent_name}, {role} for a {biz_type}. You are on a live phone call. "
+            f"You sound like a real person — patient, welcoming, and helpful — not like a robot.\n\n"
+            f"{_SCOPE_GUARD}\n\n"
+            f"CRITICAL LANGUAGE RULES — sound like a REAL {L.name} speaker on the phone, not a "
+            f"newsreader or a textbook:\n"
+            f"1. Reply ONLY in {L.name}, written in its native {L.native} script — never Roman "
+            f"letters, never English-only, never Hindi.\n"
+            f"2. Speak everyday SPOKEN {L.name}, exactly how people talk at home and on the phone. "
+            f"No bookish, literary or Sanskritised words when a common spoken word exists.\n"
+            f"3. Keep the English words people actually mix in — appointment, time, budget, "
+            f"location, demo, confirm, callback, WhatsApp, email — in English letters, never "
+            f"transliterated into {L.native} script.\n"
+            f"4. Use the natural fillers and politeness markers of spoken {L.name}, one per "
+            f"sentence, never stacked.\n"
+            f"5. Keep sentences short, casual and flowing — like real talk, not an announcement.\n"
+            f"6. Write numbers, times and prices as DIGITS (10:30, 2, 50) — never spell them out.\n\n"
+            f"{_STYLE_HINT}\n\n"
+            f"Over the conversation, {lead_hint}\n\n"
             f"{closing_hint}"
         )
     # Default: Hinglish — Hindi written in Roman letters, freely mixed with English.
@@ -460,6 +509,8 @@ def build_greeting(tenant) -> str:
             f"Hi! I'm {agent_name}, your {biz_type} assistant. "
             f"What's your name?"
         )
+    if lang in languages.LANGUAGES and lang not in ("hi", "te", "en"):
+        return languages.get(lang).greeting.format(agent_name=agent_name, biz_type=biz_type)
     # Roman Hinglish — the same register the system prompt asks for, so the very
     # first line the caller hears matches the rest of the call.
     return (
@@ -682,15 +733,12 @@ def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int) -> bytes:
 
 # ─── TTS chain: Sarvam (local service) → Smallest.ai → Edge ──────────────────
 
-# Edge TTS voice per language (the last link of the chain).
-# All three are Indian-accent female voices, so a fallback mid-call is a drop in
+# Edge TTS voice per language (the last link of the chain), from languages.py.
+# All are Indian-accent female voices, so a fallback mid-call is a drop in
 # quality rather than a jarring change of person. The English slot used to be
 # en-US-GuyNeural — an American man standing in for a female Indian persona.
-_EDGE_VOICE_BY_LANG = {
-    "hi": "hi-IN-SwaraNeural",
-    "te": "te-IN-ShrutiNeural",
-    "en": "en-IN-NeerjaNeural",
-}
+# Odia and Punjabi have no Indian Edge voice and fall back to the Hindi one.
+_EDGE_VOICE_BY_LANG = {code: L.edge_voice for code, L in languages.LANGUAGES.items()}
 
 
 class VoiceTTS(aitts_tts.TTS):
@@ -1369,11 +1417,7 @@ async def session_decline(ctx: JobContext, tenant) -> None:
             tts=build_tts(tenant.language),
         )
         await session.start(agent=Agent(instructions="Say only the given line."), room=ctx.room)
-        msgs = {
-            "te": "Kshaminchandi, prasthutam service andubatులో ledu. Dhanyavadalu.",
-            "en": "Sorry, the service is temporarily unavailable. Please call back later.",
-        }
-        session.say(msgs.get(tenant.language, "Maaf kijiye, abhi service uplabdh nahi hai. Kripya baad mein call karein."))
+        session.say(languages.get(tenant.language).unavailable)
         await asyncio.sleep(5)
     except Exception as e:
         logger.warning(f"decline failed: {e}")

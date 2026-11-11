@@ -182,11 +182,11 @@
       <div class="grid2">
         <div><label for="f_agent">Agent's name</label><input id="f_agent" placeholder="Riya" /></div>
         <div><label for="f_language">Language</label>
-          <select id="f_language"><option value="hi">Hinglish — Hindi in Roman letters</option><option value="te">Telugu</option><option value="en">English</option></select></div>
+          <select id="f_language"></select></div>
       </div>
       <label for="f_mode">What the agent is for</label>
       <select id="f_mode"><option value="business">Business assistant — answers enquiries and captures a lead</option><option value="chat">Open chat — a friend who talks about anything, no lead capture</option></select>
-      <div class="hint">Open chat ignores business type, details to collect and the closing. The built-in script and greeting exist in all three languages.</div>
+      <div class="hint">Open chat ignores business type, details to collect and the closing. The built-in script and greeting exist in every language.</div>
       <label for="f_role_description">How the agent should come across</label>
       <input id="f_role_description" placeholder="a warm, professional real estate consultant" />
       <label for="f_greeting">First line on every call <span class="opt">(blank uses the built-in greeting)</span></label>
@@ -242,7 +242,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const LANG = { hi: 'Hinglish', te: 'Telugu', en: 'English' };
+const LANG = { hi: 'Hinglish — Hindi in Roman letters', te: 'Telugu', en: 'English', ta: 'Tamil', kn: 'Kannada', ml: 'Malayalam', mr: 'Marathi', bn: 'Bengali', gu: 'Gujarati', pa: 'Punjabi', od: 'Odia' };
+document.getElementById('f_language').innerHTML = Object.entries(LANG).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 let CLIENTS = [], ALL = [], ACTIVE = [], DELIV = [], DSTATS = {};
 let view = 'overview', selected = null, filter = 'all', query = '', clientFilter = '', dStatus = '';
 let editing = null, drawerCalls = [], drawerSel = null;

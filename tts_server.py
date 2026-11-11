@@ -115,7 +115,7 @@ app = FastAPI(
 
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
-    language: str = Field(default="auto", description="hi | te | en | auto")
+    language: str = Field(default="auto", description="a code from languages.py (hi, te, en, ta, kn, ml, mr, bn, gu, pa, od) | auto")
     voice: Optional[str] = Field(
         default=None,
         description="Voice override (Sarvam speaker name or Edge voice ID)",

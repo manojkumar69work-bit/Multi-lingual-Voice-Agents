@@ -6,7 +6,7 @@ Multi-tenant from the ground up: each client organisation gets its own prompt, l
 
 The shipped configuration is **real-estate lead capture in Hinglish**, which is what the seed tenants and default prompts implement. A tenant can instead run in **open-chat mode** (`"mode": "chat"`): the agent becomes a friend who talks about anything, the business scope and lead capture are switched off, and the built-in script and greeting exist in Hinglish, Telugu and English. The seed `chat-hi`, `chat-te` and `chat-en` tenants show it.
 
-`Python` · `LiveKit / WebRTC` · `Groq Whisper + Llama 3.3` · `Sarvam Bulbul v3` · `Docker`
+`Python` · `LiveKit / WebRTC` · `Groq Whisper + Llama 3.3` · `Sarvam Bulbul v3 / v4-flash` · `Docker`
 
 <!-- TODO: this project is audio — a 30-second call recording or screen capture would
      demonstrate it far better than any README text. Consider embedding a demo clip. -->
@@ -32,6 +32,7 @@ project was doing to itself:
   Open trade-off: Sarvam's docs say romanized Indic input degrades pronunciation, since a `hi-IN` voice reads Latin text with the wrong phonemes. The A/B renders that settle it are `ab_hi_script_roman.wav` vs `ab_hi_script_native.wav` at `/demo/sarvam`. **If Roman does sound worse, the fix is a transliteration pass in front of the TTS call, not a change to what the LLM writes** — the register depends on it staying Roman.
 - **Whole replies, not fragments.** Bulbul v3 infers emphasis and pauses across the entire input, so synthesizing sentence-by-sentence and concatenating the results threw that away and restarted pitch and energy at every full stop.
 - **Pace 1.0.** The model is trained at 1.0; this ran at 1.4 for a long time, which no amount of voice quality rescues.
+- **Conversational personas for Hindi and Telugu.** Both now speak through Bulbul v4-flash personas picked by ear at `/static/voice_ab.html`: Kavya (`kavya_hi_conversational`) at her native pace, Kavitha (`kavitha_te_conversation`) at 1.2× because she reads a little slowly for a receptionist. Every other language stays on v3. Each language row in [`languages.py`](languages.py) names its model and pace.
 - **Trimming only the edges.** Sarvam prepends ~650 ms of silence and leaves ~300 ms at the end. That's dead air on every single turn, so it's gated out — while the pauses *between* sentences are held and replayed intact, because those are the prosody we wanted.
 
 Compare all of these by ear at **`/demo/sarvam`** after running
@@ -113,7 +114,7 @@ Caller (Browser or Phone)
 |-----------|---------|----------|------|
 | ASR (STT) | Sarvam `saaras:v3` codemix, streaming (hi/te); Groq Whisper-large-v3 (en) | Groq Whisper (hi/te) | Sarvam credits / Groq free tier |
 | LLM | Sarvam `sarvam-105b-conversations` (hi/te); Groq `openai/gpt-oss-120b` (en) | Groq gpt-oss (hi/te) | Sarvam credits / Groq free tier |
-| TTS | Sarvam Bulbul v3 | Smallest.ai Lightning `aashi` → Edge TTS | Sarvam free tier |
+| TTS | Sarvam Bulbul v4-flash personas (hi/te); Bulbul v3 (other languages) | Smallest.ai Lightning `aashi` → Edge TTS | Sarvam free tier |
 | VAD | Silero (bundled in AgentSession) | — | Free (local) |
 | Turn detection | LiveKit turn-detector `v1-mini` (hi/en) | Silero VAD alone (te) | Free (local CPU) |
 | SIP Trunk | Edesy India DID (Mumbai) | — | Paid (~₹500/mo) |

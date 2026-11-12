@@ -53,9 +53,11 @@ pace, speaker and temperature.
 | Portal | URL | Who | What |
 |--------|-----|-----|------|
 | **Login** | `/login` | everyone | Single sign-in; routes by role |
-| **Admin** | `/admin` | operator | Create/configure clients (prompt, greeting, language, mode, agent name, password, minute quota, WhatsApp); see per-client calls / active / minutes / leads; drill into any client's calls |
+| **Admin** | `/admin` | operator | Create/configure clients (prompt, greeting, language, languages callers can pick, per-language greetings, mode, agent name, password, minute quota, lead delivery, call link and embed snippet); see per-client calls / active / minutes / leads; drill into any client's calls |
 | **Client** | `/client` | each org | Their calls + active calls + minutes; per-call **summary, lead, transcript, and audio playback**; CSV lead export |
 | **Test caller** | `/` | operator | Browser WebRTC call UI to test the agent |
+| **Public call page** | `/call/<slug>` | callers | A client's own call page: language picker when the client offers more than one, live transcript in the script each line was spoken in. `/demo/call` opens the demo client's page |
+| **Voice listening** | `/static/voice_ab.html` | operator | Current Bulbul v3 voices side by side with the v4-flash conversational personas |
 | **Global dashboard** | `/dashboard` | internal | All calls across clients (legacy view) |
 
 > **Set your own credentials before running.** `ADMIN_USER` / `ADMIN_PASSWORD` / `SESSION_SECRET`
@@ -137,6 +139,10 @@ Caller (Browser or Phone)
 - **Multi-tenant admin panel** — Per-client prompts, language, mode (business assistant or open chat), persona, quota, WhatsApp config (`admin.html`, `tenants.py`)
 - **Call recording** — Caller + agent mixed to one WAV per call, access-checked per tenant (`recorder.py`)
 - **AI call summaries** — Groq-generated summary attached to every completed call
+- **Caller picks the language** — the public call page offers each language the client allows; the agent runs that call in it, with the client's own first line for that language when one is set
+- **Live transcript for the caller** — each line appears as it is spoken, in the script it was spoken in (Hinglish stays Roman)
+- **Shareable with prospects** — every client gets a public call link and an embeddable "Call us" button; `scripts/share.sh` opens a public tunnel in `PUBLIC_CALLS_ONLY` mode so the operator console never leaves localhost
+- **Honest about being an AI** — when a caller sincerely asks, the agent says it is the business's AI assistant
 
 ### Planned
 - **Phone calls via SIP** — Mumbai DID number (Edesy) → LiveKit SIP bridge → agent

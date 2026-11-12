@@ -355,6 +355,14 @@ mark { background: color-mix(in srgb, var(--caller) 35%, transparent); color: in
   display: flex; flex-direction: column; transform: translateX(100%); transition: transform .22s ease;
 }
 .drawer.show { transform: none; }
+/* Centred variant: the same sheet as a dialog in the middle of the screen. */
+.drawer.modal {
+  top: 50%; left: 50%; right: auto; bottom: auto; width: min(680px, calc(100vw - 32px)); height: min(820px, calc(100vh - 48px));
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  opacity: 0; pointer-events: none; transform: translate(-50%, -48%) scale(.98); transition: transform .2s ease, opacity .18s;
+}
+.drawer.modal.show { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+@media (max-width: 640px) { .drawer.modal { width: 100vw; height: 100dvh; border-radius: 0; border: 0; } }
 .drawer-head { padding: 18px 22px 0; border-bottom: 1px solid var(--line); }
 .drawer-head .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .drawer-head h3 { font-family: var(--f-display); font-size: 20px; font-weight: 800; }

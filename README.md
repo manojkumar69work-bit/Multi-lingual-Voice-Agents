@@ -226,9 +226,12 @@ Open **http://localhost:8000** in a browser → click the green call button.
 | `LIVEKIT_API_KEY` | No | `devkey` | LiveKit API key |
 | `LIVEKIT_API_SECRET` | No | `secret` | LiveKit API secret |
 | `LLM_MODEL` | No | `openai/gpt-oss-120b` | Groq model override |
-| `TTS_PACE` / `TTS_PACE_TE` | No | `1.0` / `0.95` | Speech rate (0.5–2.0). Bulbul v3 is trained at 1.0 |
+| `TTS_PACE` | No | `1.0` | Fallback speech rate (0.5–2.0). Bulbul v3 is trained at 1.0 |
+| `TTS_PACE_<CODE>` | No | from `languages.py` (`hi` 1.0, `te` 1.2) | Per-language speech rate, e.g. `TTS_PACE_TE` |
+| `TTS_MODEL_<CODE>` | No | `bulbul:v4-flash` (hi/te), `bulbul:v3` (others) | Per-language Sarvam TTS model, e.g. `TTS_MODEL_HI` |
 | `TTS_TEMPERATURE` | No | `0.6` | Prosody variation (v3 only, 0.01–2.0) |
-| `TTS_VOICE_HI` / `_TE` / `_EN` | No | `priya` / `neha` / `ishita` | Sarvam speaker per language |
+| `TTS_VOICE_<CODE>` | No | `kavya_hi_conversational` / `kavitha_te_conversation` / `ishita` (hi/te/en) | Sarvam speaker per language, e.g. `TTS_VOICE_HI` |
+| `PUBLIC_CALLS_ONLY` | No | `0` | Set `1` to serve only the call pages, their assets and the token endpoint to any host but localhost |
 | `TTS_SILENCE_RMS` | No | `150` | Silence-gate threshold; trims each reply's leading/trailing silence |
 | `TTS_MIN_BUFFER` / `TTS_MAX_CHUNK` | No | `50` / `250` | Sarvam streaming buffer sizes |
 | `TTS_SAMPLE_RATE` | No | `24000` | PCM rate; **must match** between agent and TTS service |
@@ -257,7 +260,11 @@ Open **http://localhost:8000** in a browser → click the green call button.
 ├── test_voice.py         Self-check: script/number handling reaching the voice + transcript
 ├── test_telugu.py        Self-check: Telugu STT bias-prompt path
 ├── generate_voice_samples.py  Renders before/after voice samples for /demo/sarvam
+├── languages.py          One row per language: Sarvam code, speaker, Bulbul model, pace, greeting
+├── lead_delivery.py      Sends leads to Google Sheets, WhatsApp and CRM webhooks, with retries
 ├── index.html            LiveKit WebRTC phone-call UI (test caller)
+├── call.html             Public per-client call page: language picker + live transcript
+├── landing.html          Marketing landing page
 ├── login.html            Portal sign-in
 ├── admin.html            Admin portal — manage clients + per-client usage
 ├── client.html           Client portal — an agency's calls, minutes, summaries, audio, leads
@@ -270,7 +277,8 @@ Open **http://localhost:8000** in a browser → click the green call button.
 ├── .env                  Environment variables (git-ignored)
 ├── .env.example          Environment template
 ├── requirements.txt      Python dependencies
-├── static/               Legacy demo pages (optional)
+├── scripts/share.sh      Public mode + tunnel; prints a call link per client
+├── static/               Shared portal CSS/JS, voice listening page, legacy demo pages
 └── logs/                 Runtime log output
 ```
 
@@ -291,6 +299,17 @@ Open **http://localhost:8000** in a browser → click the green call button.
 One Docker image, run as three services beside LiveKit, Redis and Caddy. See
 [`DEPLOY.md`](./DEPLOY.md) for the compose file, the ports, the secrets and the
 backup cron.
+
+## Sharing with prospects
+
+```bash
+scripts/share.sh
+```
+
+Starts the stack with `PUBLIC_CALLS_ONLY=1`, opens a cloudflared or ngrok tunnel to
+port 8000, and prints a `/call/<slug>` link per client. Visitors reach only the call
+pages; the admin and client portals stay on localhost. It needs LiveKit Cloud values
+in `.env`, because a local LiveKit cannot carry audio to people outside your network.
 
 ## SIP Trunk Setup (Planned)
 

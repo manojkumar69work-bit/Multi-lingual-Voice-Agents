@@ -62,6 +62,10 @@ class CallRecorder:
         self._chunks: list[tuple[int, np.ndarray]] = []
         self._total_caller = 0
         self._total_agent = 0
+        # Where the agent's audio currently ends on the timeline. TTS delivers a
+        # reply faster than real time, but the caller hears it end to end, so
+        # each chunk goes after the previous one rather than at its arrival time.
+        self._agent_cursor = 0
         self._closed = False
 
     def _offset_samples(self) -> int:
@@ -89,7 +93,9 @@ class CallRecorder:
             if arr.size == 0:
                 return
             mono = _to_mono_24k(arr, sample_rate, 1)
-            self._chunks.append((self._offset_samples(), mono))
+            off = max(self._offset_samples(), self._agent_cursor)
+            self._chunks.append((off, mono))
+            self._agent_cursor = off + len(mono)
             self._total_agent += len(mono)
         except Exception as e:
             logger.debug("agent pcm skipped: %s", e)
